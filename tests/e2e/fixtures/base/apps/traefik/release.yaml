@@ -1,0 +1,32 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: traefik
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/traefik/helm/traefik
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  ref:
+    tag: 42.3.2
+    digest: sha256:89dc66bab32a06520158f46019cce646dbc15fb9e8f4f53986c61fad2dcbbc9d
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: traefik
+  namespace: flux-system
+spec:
+  interval: 1h
+  releaseName: traefik
+  targetNamespace: traefik
+  chartRef:
+    kind: OCIRepository
+    name: traefik
+  valuesFrom:
+    - kind: ConfigMap
+      name: traefik-values
+      valuesKey: values.yaml

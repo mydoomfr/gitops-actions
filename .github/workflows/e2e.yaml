@@ -1,0 +1,53 @@
+---
+# Real flate renders of a fixture Flux change, so that a flate bump cannot silently
+# drop a HelmRelease or an image
+name: e2e
+
+on:
+  pull_request:
+    paths:
+      - flux-setup/**
+      - flux-images/**
+      - helm-diff/**
+      - lib/**
+      - tests/e2e/**
+      - .github/workflows/e2e.yaml
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flux:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two cold runs: some flate render bugs depend on timing
+        attempt: [1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./flux-setup
+
+      - name: Replace the checkout with the fixture trees
+        run: tests/e2e/setup.sh
+
+      - uses: ./flux-images
+        id: images
+        with:
+          path: clusters/e2e
+
+      - name: Check the renders
+        env:
+          IMAGES_DIR: ${{ runner.temp }}/flux-images
+        run: tests/e2e/check.sh "$IMAGES_DIR"

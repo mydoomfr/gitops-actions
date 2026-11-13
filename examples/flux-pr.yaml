@@ -1,0 +1,57 @@
+---
+# Pull request preview for a Flux repository: rendered HelmRelease diff and CVEs of
+# the changed images, each in its own comment. Drop a job to turn its feature off.
+name: flux-pr
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - clusters/**
+      - apps/**
+      - infra/**
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  helm-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.0.0
+        with:
+          path: clusters/my-cluster
+
+  image-scan:
+    # Read-only token: the scanner pulls third-party images and never sees a writable one
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.0.0
+        id: images
+        with:
+          path: clusters/my-cluster
+      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.0.0
+        with:
+          targets: ${{ steps.images.outputs.targets }}
+          notes: ${{ steps.images.outputs.notes }}
+
+  image-report:
+    needs: image-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.0.0

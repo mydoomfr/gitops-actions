@@ -1,0 +1,37 @@
+---
+name: pr-comment
+description: >-
+  Create or update the pull request comment tagged with a marker, so that several
+  workflows can each keep their own comment on the same pull request.
+
+inputs:
+  marker:
+    description: Unique tag of the comment, stored as a hidden HTML comment
+    required: true
+  body-file:
+    description: Markdown file holding the comment body
+    required: true
+  update-only:
+    description: Only refresh an existing comment, never create one
+    default: "false"
+  token:
+    description: Token allowed to write pull request comments
+    default: ${{ github.token }}
+  author:
+    description: Login of the account that owns the comment, the one behind the token
+    default: github-actions[bot]
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        COMMENT_AUTHOR: ${{ inputs.author }}
+        MARKER: ${{ inputs.marker }}
+        BODY_FILE: ${{ inputs.body-file }}
+        UPDATE_ONLY: ${{ inputs.update-only == 'true' && '--update-only' || '' }}
+      run: |
+        "$GITHUB_ACTION_PATH/../lib/pr-comment.sh" "$MARKER" "$BODY_FILE" $UPDATE_ONLY
