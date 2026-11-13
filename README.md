@@ -47,7 +47,7 @@ comment says so, and no new one is created.
 
 </details>
 
-<details><summary><b>Helm diff</b></summary>
+<details open><summary><b>Helm diff</b></summary>
 
 > ### Rendered HelmRelease diff (abcdef0)
 >
