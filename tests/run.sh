@@ -97,6 +97,16 @@ check "shows a failed old scan" grep -q 'app:0.9` → `1.0` (old scan failed ⚠
 check "puts the notes under the heading" bash -c 'sed -n 3p comment.md | grep -q "> note"'
 MAX_CHARS=500 "$lib/cve.sh" render scan-*.json
 check "drops the details over MAX_CHARS" bash -c 'grep -q "too long for a comment" comment.md && ! grep -q "<details>" comment.md && grep -q "<details>" comment-full.md'
+MAX_ROWS=1 RUN_URL=https://example.com/run "$lib/cve.sh" render scan-docker.io_traefik-0.json
+check "lists added CVEs before the row limit" bash -c 'grep -A2 "^| CVE" comment.md | grep -q "🆕 \[CVE-4\]"'
+check "links the run summary past the row limit" grep -q '^…and 1 more, see the \[run summary\](https://example.com/run)\.$' comment.md
+check "keeps every row in the summary" bash -c 'grep -q "\[CVE-2\]" comment-full.md && grep -q "\[CVE-4\]" comment-full.md && ! grep -q "…and" comment-full.md'
+SEVERITIES=critical "$lib/cve.sh" render scan-docker.io_traefik-0.json
+check "counts fixable CVEs of the chosen severities" grep -q '| 1 → 2 🔺 | 1 | 0 | 1 → 0 ✅ |$' comment.md
+check "lists only the chosen severities" bash -c 'grep -q "0 Critical, 0 fixable, 0 added, 1 fixed" comment.md && grep -q "^No Critical vulnerability\.$" comment.md'
+SEVERITIES='High medium' "$lib/cve.sh" render scan-docker.io_traefik-0.json
+check "lists several chosen severities" bash -c 'grep -q "3 High/Medium," comment.md && grep -q "\[CVE-3\]" comment.md'
+check "rejects an unknown severity" bash -c '! SEVERITIES=urgent "$1" render scan-docker.io_traefik-0.json' _ "$lib/cve.sh"
 NOTES='> warning' "$lib/cve.sh" render
 check "renders notes without any scan" bash -c 'grep -q "> warning" comment.md && ! grep -q "^| Image" comment.md'
 
