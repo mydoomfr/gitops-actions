@@ -1,0 +1,22 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "flate binary version next to its SHA-pinned action: same depName and datasource (github-tags) as the action, so both resolve the same tag and land in one branch",
+      "managerFilePatterns": [
+        "/^flux-setup/action\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "\\n\\s+version:\\s*(?<currentValue>\\S+)"
+      ],
+      "depNameTemplate": "home-operations/flate",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    }
+  ]
+}

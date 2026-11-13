@@ -1,0 +1,74 @@
+---
+name: helm-diff
+description: >-
+  Render the HelmRelease changes of a pull request with flate and keep them in one
+  pull request comment. Needs flux-setup first and pull-requests: write.
+
+inputs:
+  path:
+    description: Cluster directory holding the Flux bootstrap objects, relative to the repository root
+    required: true
+  marker:
+    description: Tag of the pull request comment
+    default: helm-diff
+  max-chars:
+    description: Size above which a HelmRelease diff is replaced by a link to the run summary
+    default: "60000"
+  token:
+    description: Token allowed to write pull request comments
+    default: ${{ github.token }}
+  author:
+    description: Login of the account that owns the comment, the one behind the token
+    default: github-actions[bot]
+
+runs:
+  using: composite
+  steps:
+    - name: Render HelmRelease diff
+      id: diff
+      shell: bash
+      env:
+        CLUSTER_PATH: ${{ inputs.path }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/helm-diff"
+        unset FLATE_BASE # exported by the flate action, mutually exclusive with --path-orig
+        # Render failures still print the other changes, with the failed producers under .suppressed
+        flate diff hr --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$RUNNER_TEMP/helm-diff/diff.json" ||
+          echo "partial=true" >> "$GITHUB_OUTPUT"
+
+    - name: Comment on the pull request
+      shell: bash
+      working-directory: ${{ runner.temp }}/helm-diff
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        PARTIAL: ${{ steps.diff.outputs.partial }}
+        MAX_CHARS: ${{ inputs.max-chars }}
+        MARKER: ${{ inputs.marker }}
+        COMMENT_AUTHOR: ${{ inputs.author }}
+      run: |
+        lib=$GITHUB_ACTION_PATH/../lib
+        "$lib/helm-diff-comment.sh" diff.json
+        if [[ -f noop ]]; then
+          # Refresh an earlier diff comment, never open one for a no-op
+          echo "No rendered HelmRelease change as of ${HEAD_SHA::7}." > comment.md
+          "$lib/pr-comment.sh" "$MARKER" comment.md --update-only || true
+          exit 0
+        fi
+        # Step summaries cap at 1 MiB: fall back to the comment-sized version
+        if (( $(wc -c < comment-full.md) < 1000000 )); then
+          cat comment-full.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+        fi
+        "$lib/pr-comment.sh" "$MARKER" comment.md
+
+    - name: Fail on incomplete render
+      if: ${{ steps.diff.outputs.partial }}
+      shell: bash
+      run: |
+        echo "::error::flate could not render every HelmRelease, see the comment and the logs above"
+        exit 1

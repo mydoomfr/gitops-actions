@@ -1,0 +1,237 @@
+{
+  "changes": [
+    {
+      "kind": "Deployment",
+      "namespace": "traefik",
+      "name": "traefik",
+      "status": "changed",
+      "parent": {
+        "kind": "HelmRelease",
+        "namespace": "flux-system",
+        "name": "traefik"
+      },
+      "oldChart": "traefik-42.3.2",
+      "newChart": "traefik-42.3.2",
+      "old": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "traefik",
+          "namespace": "traefik"
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "initContainers": [
+                {
+                  "name": "init",
+                  "image": "docker.io/library/busybox:1.36"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "traefik",
+                  "image": "docker.io/traefik@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "env": [
+                    {
+                      "name": "X",
+                      "value": "ghcr.io/example/not-an-image:2.0"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "traefik",
+          "namespace": "traefik"
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "initContainers": [
+                {
+                  "name": "init",
+                  "image": "docker.io/library/busybox:1.36"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "traefik",
+                  "image": "docker.io/traefik@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "env": [
+                    {
+                      "name": "X",
+                      "value": "ghcr.io/example/not-an-image:2.0"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "Deployment",
+      "namespace": "hedgedoc",
+      "name": "hedgedoc",
+      "status": "changed",
+      "parent": {
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "hedgedoc"
+      },
+      "old": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "hedgedoc",
+          "namespace": "hedgedoc"
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "initContainers": [
+                {
+                  "name": "init",
+                  "image": "docker.io/library/busybox:1.36"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "hedgedoc",
+                  "image": "quay.io/hedgedoc/hedgedoc:1.12.0-alpine@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                  "env": [
+                    {
+                      "name": "X",
+                      "value": "ghcr.io/example/not-an-image:2.0"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "hedgedoc",
+          "namespace": "hedgedoc"
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "initContainers": [
+                {
+                  "name": "init",
+                  "image": "docker.io/library/busybox:1.36"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "hedgedoc",
+                  "image": "quay.io/hedgedoc/hedgedoc:1.12.0-alpine@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                  "env": [
+                    {
+                      "name": "X",
+                      "value": "ghcr.io/example/not-an-image:2.0"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "Deployment",
+      "namespace": "example",
+      "name": "new",
+      "status": "added",
+      "parent": {
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "example"
+      },
+      "old": null,
+      "new": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "new",
+          "namespace": "example"
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "initContainers": [
+                {
+                  "name": "init",
+                  "image": "docker.io/library/busybox:1.36"
+                }
+              ],
+              "containers": [
+                {
+                  "name": "new",
+                  "image": "ghcr.io/example/new:1.0",
+                  "env": [
+                    {
+                      "name": "X",
+                      "value": "ghcr.io/example/not-an-image:2.0"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "ConfigMap",
+      "namespace": "flux-system",
+      "name": "values",
+      "status": "changed",
+      "parent": {
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "example"
+      },
+      "old": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "data": {
+          "values.yaml": "image: ghcr.io/example/not-an-image:1.0\n"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "data": {
+          "values.yaml": "image: ghcr.io/example/not-an-image:1.1\n"
+        }
+      }
+    }
+  ],
+  "suppressed": [
+    {
+      "parent": {
+        "kind": "HelmRelease",
+        "namespace": "apps",
+        "name": "broken"
+      },
+      "side": "current",
+      "count": 3,
+      "reason": "chart source OCIRepository apps/broken skipped: object not in store at reconcile time"
+    }
+  ]
+}

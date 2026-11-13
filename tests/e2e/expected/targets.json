@@ -1,0 +1,23 @@
+[
+  {
+    "name": "docker.io/traefik/whoami",
+    "new_label": "v1.11.0",
+    "new_source": "registry:docker.io/traefik/whoami:v1.11.0",
+    "old_label": "v1.10.4",
+    "old_source": "registry:docker.io/traefik/whoami:v1.10.4"
+  },
+  {
+    "name": "docker.io/traefik",
+    "new_label": "@e5fbdb9",
+    "new_source": "registry:docker.io/traefik@sha256:e5fbdb9f9402086493391e7972691d319b7269e4362e901df38db921dce669e9",
+    "old_label": "@f346ebd",
+    "old_source": "registry:docker.io/traefik@sha256:f346ebd1adf58c1daea05fe6c624599f83462edbf3025f437381e895bccdd1a1"
+  },
+  {
+    "name": "ghcr.io/stefanprodan/podinfo",
+    "new_label": "6.17.0",
+    "new_source": "registry:ghcr.io/stefanprodan/podinfo:6.17.0",
+    "old_label": "6.16.0",
+    "old_source": "registry:ghcr.io/stefanprodan/podinfo:6.16.0"
+  }
+]

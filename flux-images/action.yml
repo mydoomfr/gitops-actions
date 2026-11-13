@@ -1,0 +1,50 @@
+---
+name: flux-images
+description: >-
+  List the container images a pull request changes in a Flux tree, each paired with
+  the image it replaces, as targets for cve-scan. Needs flux-setup first.
+
+inputs:
+  path:
+    description: Cluster directory holding the Flux bootstrap objects, relative to the repository root
+    required: true
+  max-images:
+    description: Maximum number of changed images to list, the others are counted in the notes
+    default: "20"
+
+outputs:
+  targets:
+    description: JSON file of cve-scan targets, an empty array when no image changed
+    value: ${{ runner.temp }}/flux-images/targets.json
+  notes:
+    description: Markdown file of warnings for the report (incomplete render, skipped images), maybe empty
+    value: ${{ runner.temp }}/flux-images/notes.md
+
+runs:
+  using: composite
+  steps:
+    - name: Render the changes
+      id: diff
+      shell: bash
+      env:
+        CLUSTER_PATH: ${{ inputs.path }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/flux-images"
+        unset FLATE_BASE # exported by the flate action, mutually exclusive with --path-orig
+        # One run per kind: flate 0.7 `diff all` and `diff images` skip some HelmReleases
+        # that `diff hr` renders ("chart source ... not in store at reconcile time")
+        for kind in hr ks; do
+          flate diff "$kind" --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$RUNNER_TEMP/flux-images/$kind.json" ||
+            echo "partial=true" >> "$GITHUB_OUTPUT"
+        done
+
+    - name: List changed images
+      shell: bash
+      working-directory: ${{ runner.temp }}/flux-images
+      env:
+        MAX_IMAGES: ${{ inputs.max-images }}
+        PARTIAL: ${{ steps.diff.outputs.partial }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        "$GITHUB_ACTION_PATH/../lib/flux-images.sh" hr.json ks.json
+        jq -r '.[] | "\(.old_source // "new") → \(.new_source)"' targets.json

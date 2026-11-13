@@ -1,0 +1,62 @@
+---
+name: flux-setup
+description: >-
+  Check out a pull request in ./pr and its base in ./base, make both renderable
+  without the SOPS key and install flate. Run it first in every job that uses
+  helm-diff or flux-images.
+
+inputs:
+  sops-values-pattern:
+    description: >-
+      find -name pattern of the SOPS-encrypted Helm values files whose encrypted
+      leaves get typed placeholders; empty to leave them encrypted
+    default: "*values.enc.yaml"
+  api-versions:
+    description: >-
+      Whitespace-separated CRD API versions that offline helm should report as
+      available, for charts that gate templates on them
+    default: >-
+      monitoring.coreos.com/v1 monitoring.coreos.com/v1alpha1 gateway.networking.k8s.io/v1
+      cert-manager.io/v1 snapshot.storage.k8s.io/v1
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        path: pr
+        fetch-depth: 2 # merge commit + its base parent
+        persist-credentials: false
+
+    - name: Materialize base tree
+      shell: bash
+      run: git -C pr worktree add ../base HEAD^1
+
+    - name: Replace SOPS values with placeholders
+      if: ${{ inputs.sops-values-pattern != '' }}
+      # No SOPS key in CI: keep keys, maps and lists, swap each encrypted leaf for a
+      # typed dummy. "# ..." is a YAML comment, valid wherever a chart inlines it,
+      # except a *name/*Name key that may become metadata.name: flate rejects an
+      # empty one, so those get a DNS label.
+      shell: bash
+      env:
+        PATTERN: ${{ inputs.sops-values-pattern }}
+      run: |
+        find pr base -name "$PATTERN" -print0 | xargs -0 -r -n1 yq -i '
+          del(.sops) |
+          (.. | select(tag == "!!str" and test("^ENC\[AES256_GCM,.*,type:bool\]$"))) = true |
+          (.. | select(tag == "!!str" and test("^ENC\[AES256_GCM,.*,type:(int|float)\]$"))) = 1 |
+          (.. | select(tag == "!!str" and test("^ENC\[AES256_GCM,") and (path | .[-1] | tostring | test("(?i)name$")))) = "sops-redacted" |
+          (.. | select(tag == "!!str" and test("^ENC\[AES256_GCM,"))) = "# sops-redacted"'
+
+    - uses: home-operations/flate/action@bbb6ebc344da051752dbdb1b413860ceffcfb63d # v0.7.3
+      with:
+        # github.action_ref is empty in a nested composite, so without this input the
+        # action installs the latest binary whatever the SHA pin. Renovate bumps both.
+        version: 0.7.3
+
+    - name: Declare CRD APIs
+      shell: bash
+      env:
+        API_VERSIONS: ${{ inputs.api-versions }}
+      run: echo "FLATE_API_VERSIONS=$(echo $API_VERSIONS)" >> "$GITHUB_ENV"

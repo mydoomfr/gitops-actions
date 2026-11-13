@@ -1,0 +1,5 @@
+image:
+  registry: docker.io
+  repository: traefik
+  tag: v3.8.0-rc.2
+  digest: sha256:e5fbdb9f9402086493391e7972691d319b7269e4362e901df38db921dce669e9
