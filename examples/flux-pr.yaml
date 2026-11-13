@@ -25,8 +25,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.0.0
-      - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.1.0
         with:
           path: clusters/my-cluster
 
@@ -37,12 +37,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.0.0
-      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.1.0
         id: images
         with:
           path: clusters/my-cluster
-      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.1.0
         with:
           targets: ${{ steps.images.outputs.targets }}
           notes: ${{ steps.images.outputs.notes }}
@@ -54,4 +54,4 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.1.0

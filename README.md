@@ -20,8 +20,9 @@ Composite GitHub Actions that comment on every pull request, Renovate ones inclu
 - 📦 **Helm diff**: the real render of every HelmRelease the pull request touches,
   chart n-1 with the old values against chart n with the new values.
 - 🛡️ **CVE diff**: for every container image the pull request changes, the
-  vulnerabilities of the old and new image side by side, with the High/Critical CVEs
-  the change adds or fixes, scanned by [grype](https://github.com/anchore/grype).
+  vulnerabilities of the old and new image side by side, then the High/Critical CVEs
+  (configurable) of the new image, those the change adds flagged 🆕, and those it
+  fixes. Scanned by [grype](https://github.com/anchore/grype).
 - 🔐 **SOPS without the key**: encrypted Helm values are rendered with placeholders, so
   CI never needs the private key.
 
@@ -30,20 +31,31 @@ comment says so, and no new one is created.
 
 ## Preview
 
+Example: a pull request that upgrades the traefik chart (42.3.2 → 42.4.0) and its
+image (v3.7.17 → v3.7.18, pinned by digest), and enables its PodDisruptionBudget.
+
 <details open><summary><b>CVE diff</b></summary>
 
 > ### Image CVEs (abcdef0)
 >
 > | Image | Version | Critical | High | Medium | Low | Fixable |
 > |---|---|---|---|---|---|---|
-> | `docker.io/library/nginx` | `1.29.2` → `1.29.3` | 1 → 0 ✅ | 1 → 2 🔺 | 1 | 0 | 2 → 1 ✅ |
+> | `docker.io/traefik` | `v3.7.17@f4bb143` → `v3.7.18@9c437ac` | 0 | 2 → 1 ✅ | 4 | 1 | 2 → 1 ✅ |
+>
+> <details open><summary><code>docker.io/traefik</code>: 1 High/Critical, 1 fixable, 1 added, 2 fixed</summary>
 >
 > | CVE | Severity | Packages | Version | Fixed in |
 > |---|---|---|---|---|
-> | CVE-0000-0002 | High | `zlib` | `1.2` | 1.3 |
-> | 🆕 CVE-0000-0004 | High | `glibc` | `2.36` | |
+> | 🆕 CVE-0000-0004 | High | `golang.org/x/net` | `v0.47.0` | 0.48.0 |
 >
-> **Fixed**: CVE-0000-0001 (Critical, `libcrypto3` `libssl3`)
+> **Fixed**
+>
+> | CVE | Severity | Packages | Version | Fixed in |
+> |---|---|---|---|---|
+> | CVE-0000-0001 | High | `stdlib` | `go1.25.4` | 1.25.5 |
+> | CVE-0000-0002 | High | `zlib` | `1.3.1-r2` | 1.3.2-r0 |
+>
+> </details>
 
 </details>
 
@@ -53,14 +65,47 @@ comment says so, and no new one is created.
 >
 > | HelmRelease | Chart | Added | Changed | Removed |
 > |---|---|--:|--:|--:|
-> | `flux-system/traefik` | `traefik` 42.3.2 | | 1 | |
+> | `flux-system/traefik` | `traefik` 42.3.2 → 42.4.0 | 1 | 1 | |
+>
+> <details open><summary><code>flux-system/traefik</code>: 1 added, 1 changed</summary>
 >
 > ```diff
 > --- Deployment traefik/traefik
 > +++ Deployment traefik/traefik
-> -          image: docker.io/traefik:v3.8.0-rc.1
-> +          image: docker.io/traefik:v3.8.0-rc.2
+> @@ -9,3 +9,3 @@
+>  spec:
+> -  replicas: 1
+> +  replicas: 2
+>    revisionHistoryLimit: 10
+> @@ -44,3 +44,5 @@
+>              - --providers.kubernetesgateway.gatewayClass=traefik
+> +            - --entryPoints.web.transport.lifeCycle.requestAcceptGraceTimeout=5s
+>              - --entryPoints.websecure.http.tls=true
+> +            - --entryPoints.websecure.transport.lifeCycle.requestAcceptGraceTimeout=5s
+>              - --log.level=INFO
+> @@ -63,4 +65,4 @@
+>              - name: USER
+>                value: traefik
+> -          image: docker.io/traefik:v3.7.17@sha256:f4bb143d1135a579b630ed491e17ec50f6f7c9c6a30585ff3d385471d2a86f5a
+> +          image: docker.io/traefik:v3.7.18@sha256:9c437ac4f09ce6f4980a8544902d3475fdf70a1a7c578729581d2535dfa7d635
+>            imagePullPolicy: IfNotPresent
+> --- PodDisruptionBudget traefik/traefik
+> +++ PodDisruptionBudget traefik/traefik
+> @@ -0,0 +1,11 @@
+> +apiVersion: policy/v1
+> +kind: PodDisruptionBudget
+> +metadata:
+> +  name: traefik
+> +  namespace: traefik
+> +spec:
+> +  maxUnavailable: 1
+> +  selector:
+> +    matchLabels:
+> +      app.kubernetes.io/name: traefik
+> +      app.kubernetes.io/instance: traefik-traefik
 > ```
+>
+> </details>
 
 </details>
 
@@ -115,7 +160,7 @@ The default covers Prometheus Operator, Gateway API, cert-manager and VolumeSnap
 The input **replaces** that list, so repeat the defaults when you add an API:
 
 ```yaml
-- uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.0.0
+- uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
   with:
     api-versions: >-
       monitoring.coreos.com/v1 monitoring.coreos.com/v1alpha1
@@ -147,8 +192,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.0.0
-      - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.1.0
         with:
           path: clusters/my-cluster
 
@@ -157,12 +202,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.0.0
-      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.1.0
         id: images
         with:
           path: clusters/my-cluster
-      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.1.0
         with:
           targets: ${{ steps.images.outputs.targets }}
           notes: ${{ steps.images.outputs.notes }}
@@ -173,7 +218,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.1.0
 ```
 
 ```mermaid
@@ -201,7 +246,7 @@ per image, one `cve-report` job merging them into a single comment:
         with:
           name: my-app-image
           path: ${{ runner.temp }}
-      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.1.0
         with:
           name: my-app
           new-source: docker-archive:${{ runner.temp }}/image.tar
@@ -216,7 +261,7 @@ per image, one `cve-report` job merging them into a single comment:
     permissions:
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.0.0
+      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.1.0
         with:
           artifact-pattern: "*-cves"
           name-header: App
@@ -283,7 +328,8 @@ as `registry:` or `docker-archive:`.
 | `title`, `name-header`, `intro` | `Image CVEs`, `Image`, default line | Comment heading, first column header, line under the heading |
 | `noop-message` | `No image change as of {sha}.` | Refreshes an existing comment when there is nothing to report |
 | `platform` | `linux/amd64` | Platform named in the default intro |
-| `max-rows` | `30` | High/Critical rows listed per image |
+| `severities` | `Critical,High` | Severities listed in detail and counted as fixable |
+| `max-rows` | `30` | Rows per CVE table in the comment; the run summary keeps them all |
 | `max-chars` | `60000` | Size above which the lists are replaced by a link to the run summary |
 | `token`, `author` | workflow token, `github-actions[bot]` | Identity that writes the comment |
 

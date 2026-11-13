@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 # Usage:
 #   cve.sh scan <targets.json>   writes one scan-<name>-<n>.json per target into OUT_DIR
-#   cve.sh render <scan.json>... writes comment.md, plus comment-full.md without size limit
+#   cve.sh render <scan.json>... writes comment.md, plus comment-full.md without row nor size limit
 # A target is {name, new_label, new_source, old_label?, old_source?}, sources being grype
 # ones (registry:, docker-archive:...): scan compares the new image with the old one.
+# SEVERITIES (comma or space separated) picks the severities listed in detail and
+# counted as fixable.
 set -euo pipefail
 
 : "${GRYPE:=grype}" "${PLATFORM:=linux/amd64}" "${OUT_DIR:=.}" "${MAX_ROWS:=30}" "${MAX_CHARS:=60000}"
 : "${HEAD_SHA:=}" "${RUN_URL:=}" "${TITLE:=Image CVEs}" "${NAME_HEADER:=Image}" "${NOTES:=}"
-: "${INTRO:=Grype, \`$PLATFORM\`, counts read old → new. One count per CVE, whatever the number of packages it hits; fixable = High/Critical with a fix released.}"
+: "${SEVERITIES:=Critical,High}"
+
+# Canonical severities in rank order, such as ["Critical","High"]; fails on an unknown one
+SEVERITY_LIST=$(jq -cn --arg s "$SEVERITIES" '
+  def rank: {Critical: 0, High: 1, Medium: 2, Low: 3, Negligible: 4, Unknown: 5}[.];
+  [$s | ascii_downcase | splits("[ ,]+") | select(. != "") | (.[:1] | ascii_upcase) + .[1:]]
+  | unique | sort_by(rank)
+  | if . == [] or any(rank == null) then error("SEVERITIES: expected Critical, High, Medium, Low, Negligible or Unknown, got \($s)") end')
+SEVERITY_LABEL=$(jq -r 'join("/")' <<< "$SEVERITY_LIST")
+: "${INTRO:=Grype, \`$PLATFORM\`, counts read old → new. One count per CVE, whatever the number of packages it hits; fixable = $SEVERITY_LABEL with a fix released.}"
 
 # Prints the deduplicated matches of a grype source, or null when the scan fails
 scan() {
@@ -47,9 +58,10 @@ scan_all() {
 }
 
 render() {
-  jq -r -n --slurpfile items <(if (( $# > 1 )); then jq -s 'sort_by(.name)' "${@:2}"; else echo '[]'; fi) \
-    --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --argjson rows "$MAX_ROWS" --argjson details "$1" \
-    --arg title "$TITLE" --arg intro "$INTRO" --arg header "$NAME_HEADER" --arg notes "$NOTES" '
+  jq -r -n --slurpfile items <(if (( $# > 2 )); then jq -s 'sort_by(.name)' "${@:3}"; else echo '[]'; fi) \
+    --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --argjson rows "$2" --argjson details "$1" \
+    --arg title "$TITLE" --arg intro "$INTRO" --arg header "$NAME_HEADER" --arg notes "$NOTES" \
+    --argjson listed "$SEVERITY_LIST" --arg label "$SEVERITY_LABEL" '
     def rank: {Critical: 0, High: 1, Medium: 2, Low: 3}[.severity] // 4;
     # grype reports a CVE once per binary package built from the same source: one entry per CVE
     def cves: if . == null then null else group_by(.id) | map(sort_by(rank) | {
@@ -57,19 +69,22 @@ render() {
       pkgs: (map(.pkg) | unique), fix: (map(.fix | select(. != "")) | unique | join(", "))
     }) end;
     def count($s): map(select(.severity == $s)) | length;
-    def severe: map(select(rank < 2)) | sort_by(rank, .fix == "", .id);
+    def severe: map(select(.severity | IN($listed[]))) | sort_by(rank, .fix == "", .id);
     def fixable: severe | map(select(.fix != "")) | length;
     def cell($o; $n):
       if $o == null then "\($n)"
       elif $n > $o then "\($o) → \($n) 🔺"
       elif $n < $o then "\($o) → \($n) ✅"
       else "\($n)" end;
+    def more($n): "…and \($n) more" + (if $run != "" then ", see the [run summary](\($run))." else "." end);
     def table($vulns; $added):
-      "| CVE | Severity | Packages | Version | Fixed in |", "|---|---|---|---|---|",
+      # Added CVEs first, so that the row limit never hides one
+      ($vulns | sort_by((.id | IN($added[]) | not), rank, .fix == "", .id)) as $vulns
+      | "| CVE | Severity | Packages | Version | Fixed in |", "|---|---|---|---|---|",
       ($vulns[:$rows][] | "| \(if .id | IN($added[]) then "🆕 " else "" end)"
         + "\(if .url != "" then "[\(.id)](\(.url))" else .id end) | \(.severity) | "
         + "\(.pkgs | map("`\(.)`") | join(" ")) | `\(.version)` | \(.fix) |"),
-      (if ($vulns | length) > $rows then "", "…and \(($vulns | length) - $rows) more." else empty end),
+      (if ($vulns | length) > $rows then "", more(($vulns | length) - $rows) else empty end),
       "";
 
     $items[0] | map(.nv |= cves | .ov |= cves) as $items
@@ -92,13 +107,13 @@ render() {
         | (.ov // [] | map(.id)) as $old
         | (if .ov == null then [] else $current | map(.id | select(IN($old[]) | not)) end) as $added
         | (.ov // [] | severe | map(select(.id | IN($current[].id) | not))) as $fixed
-        | "<details><summary><code>\(.name)</code>: \($current | length) High/Critical, \($current | map(select(.fix != "")) | length) fixable"
+        | "<details><summary><code>\(.name)</code>: \($current | length) \($label), \($current | map(select(.fix != "")) | length) fixable"
           + "\(if .ov == null then "" else ", \($added | length) added, \($fixed | length) fixed" end)</summary>", "",
-          (if $current == [] then "No High/Critical vulnerability.", "" else table($current; $added) end),
+          (if $current == [] then "No \($label) vulnerability.", "" else table($current; $added) end),
           (if $fixed == [] then empty else "**Fixed**", "", table($fixed; []) end),
           "</details>", ""
       else
-        "High/Critical details are too long for a comment: see the [run summary](\($run))."
+        "\($label) details are too long for a comment: see the [run summary](\($run))."
       end)'
 }
 
@@ -108,12 +123,9 @@ case $1 in
     ;;
   render)
     shift
-    render true "$@" > comment-full.md
-    if (( $(wc -c < comment-full.md) > MAX_CHARS )); then
-      render false "$@" > comment.md
-    else
-      cp comment-full.md comment.md
-    fi
+    render true 1000000 "$@" > comment-full.md
+    render true "$MAX_ROWS" "$@" > comment.md
+    if (( $(wc -c < comment.md) > MAX_CHARS )); then render false "$MAX_ROWS" "$@" > comment.md; fi
     ;;
   *)
     echo "usage: $0 scan <targets.json> | render <scan.json>..." >&2
