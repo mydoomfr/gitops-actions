@@ -26,10 +26,10 @@ check "lists the expected image pairs" \
   diff -u <(jq -S . "$here/expected/targets.json") <(jq -S . "$images/targets.json")
 check "leaves no note" test ! -s "$images/notes.md"
 
-echo "# helm-diff"
+echo "# flux-diff"
 cd "$work"
 unset FLATE_BASE
-# Same render as the helm-diff action
+# Same render as the flux-diff action
 rc=0
 flate diff hr --path "$root/pr/clusters/e2e" --path-orig "$root/base/clusters/e2e" -o json > diff.json || rc=$?
 check "renders without error" test "$rc" = 0
@@ -38,12 +38,12 @@ for release in traefik podinfo; do
   check "renders the $release Deployment" \
     jq -e --arg r "$release" 'any(.changes[]; .parent.name == $r and .kind == "Deployment")' diff.json
 done
-# Same Kustomization render as the helm-diff action, CRDs included
+# Same Kustomization render as the flux-diff action, CRDs included
 rc=0
 flate diff ks --skip-kinds Secret --path "$root/pr/clusters/e2e" --path-orig "$root/base/clusters/e2e" -o json > ks.json || rc=$?
 check "renders Kustomizations without error" test "$rc" = 0
 "$lib/kustomization-scope.sh" ks.json "$root/pr" "$root/base" > scope.json
-KS_SCOPE=scope.json HEAD_SHA=0000000 "$lib/helm-diff-comment.sh" diff.json ks.json
+KS_SCOPE=scope.json HEAD_SHA=0000000 "$lib/flux-diff-comment.sh" diff.json ks.json
 check "comments the chart bump" grep -q '^| `flux-system/podinfo` | `podinfo` 6.16.0 → 6.17.0 |' comment.md
 check "diffs a remote resource bump" bash -c 'grep -q "^| \`flux-system/remote\` | remote \`raw.githubusercontent.com/…/6.17.0/kustomize/deployment.yaml\` |" comment.md && grep -q "^+ *image: ghcr.io/stefanprodan/podinfo:6.17.0$" comment.md'
 check "summarizes a CRD from a shared base" bash -c 'grep -q "^| \`flux-system/crds\` | shared base or variable |" comment.md && grep -q "^| \`widgets.example.com\` | v1 (storage) | v1: +1 (\`spec.color\`) |$" comment.md'

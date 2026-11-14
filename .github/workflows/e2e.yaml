@@ -8,6 +8,7 @@ on:
     paths:
       - flux-setup/**
       - flux-images/**
+      - flux-diff/**
       - helm-diff/**
       - lib/**
       - tests/e2e/**

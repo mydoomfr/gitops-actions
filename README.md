@@ -165,10 +165,10 @@ Every other changed Kustomization (an edited manifest, an `images:` tag bump in 
 `kustomization.yaml`) is only counted, and on its own never opens a comment: a Renovate
 image or chart bump stays as quiet as before.
 
-Pick the reasons with the `kustomizations` input of `helm-diff`:
+Pick the reasons with the `kustomizations` input of `flux-diff`:
 
 ```yaml
-- uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.1.0
+- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.1.0
   with:
     path: clusters/my-cluster
     kustomizations: remote,source # auto (default: remote,source,shared,edited), all, none
@@ -234,7 +234,7 @@ excluded kinds at the job level and keep only `Secret` (the Kustomization diff f
 the `kustomization-skip-kinds` input instead):
 
 ```yaml
-  helm-diff:
+  flux-diff:
     env:
       FLATE_SKIP_KINDS: Secret
 ```
@@ -245,19 +245,19 @@ Copy [`examples/flux-pr.yaml`](examples/flux-pr.yaml) to `.github/workflows/`, s
 `path` to the directory holding your cluster's Flux bootstrap objects, and pin the
 actions to a release SHA. Drop a job to turn its feature off.
 
-The `helm-diff` job covers HelmReleases and, out of the box, what the git diff hides in
+The `flux-diff` job covers HelmReleases and, out of the box, what the git diff hides in
 Kustomizations: see [its options](#what-the-git-diff-hides-in-kustomizations).
 
 ```yaml
 jobs:
-  helm-diff:
+  flux-diff:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
     steps:
       - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
-      - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.1.0
         with:
           path: clusters/my-cluster
           # kustomizations: auto # remote,source,shared,edited; all; none
@@ -340,7 +340,8 @@ as `registry:` or `docker-archive:`.
 | Action | What it does |
 |---|---|
 | [`flux-setup`](flux-setup/action.yml) | Checks out the pull request in `./pr` and its base in `./base`, replaces SOPS values with placeholders, installs flate. |
-| [`helm-diff`](helm-diff/action.yml) | Renders the HelmRelease and Kustomization diff and comments it. Needs `pull-requests: write`. |
+| [`flux-diff`](flux-diff/action.yml) | Renders the HelmRelease and Kustomization diff and comments it. Needs `pull-requests: write`. |
+| [`helm-diff`](helm-diff/action.yml) | Former name of `flux-diff`, kept as an alias until v2. |
 | [`flux-images`](flux-images/action.yml) | Lists the images the pull request changes, each paired with the image it replaces. |
 | [`cve-scan`](cve-scan/action.yml) | Scans each new image and the one it replaces, uploads the scans as an artifact. Run it read-only. |
 | [`cve-report`](cve-report/action.yml) | Downloads the scans and comments the CVE report. Needs `pull-requests: write`. |
@@ -355,12 +356,12 @@ as `registry:` or `docker-archive:`.
 | `sops-values-pattern` | `*values.enc.yaml` | `find -name` pattern of the SOPS-encrypted Helm values; empty to leave them encrypted |
 | `api-versions` | Prometheus Operator, Gateway API, cert-manager, VolumeSnapshot | CRD API versions offline helm reports as available, see [Charts using CRDs](#charts-using-crds) |
 
-**helm-diff**
+**flux-diff** (and its former name, `helm-diff`)
 
 | Input | Default | Description |
 |---|---|---|
 | `path` | required | Cluster directory holding the Flux bootstrap objects |
-| `marker` | `helm-diff` | Tag of the comment |
+| `marker` | `helm-diff` | Tag of the comment, kept from the former name so that existing comments keep updating |
 | `kustomizations` | `auto` | Kustomizations to list: `auto` (`remote,source,shared,edited`), `all`, `none`, or a list of those reasons and `direct` |
 | `kustomization-skip-kinds` | `Secret` | Comma-separated kinds left out of the Kustomization diff |
 | `max-chars` | `60000` | Size above which a section is replaced by a link to the run summary |

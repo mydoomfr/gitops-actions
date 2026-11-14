@@ -1,15 +1,16 @@
 ---
+# Copy of flux-diff/action.yml, only the name and description differ (tests/run.sh checks it)
 name: helm-diff
 description: >-
-  Render the HelmRelease and Kustomization changes of a pull request with flate and
-  keep them in one pull request comment. Needs flux-setup first and pull-requests: write.
+  Former name of flux-diff, kept as an alias until v2: same inputs, same comment.
+  Use flux-diff.
 
 inputs:
   path:
     description: Cluster directory holding the Flux bootstrap objects, relative to the repository root
     required: true
   marker:
-    description: Tag of the pull request comment
+    description: Tag of the pull request comment, helm-diff to keep updating the comments of the former name
     default: helm-diff
   kustomizations:
     description: >-
@@ -43,7 +44,7 @@ runs:
         KUSTOMIZATIONS: ${{ inputs.kustomizations }}
         SKIP_KINDS: ${{ inputs.kustomization-skip-kinds }}
       run: |
-        dir=$RUNNER_TEMP/helm-diff
+        dir=$RUNNER_TEMP/flux-diff
         mkdir -p "$dir"
         : > "$dir/ks.json"
         unset FLATE_BASE # exported by the flate action, mutually exclusive with --path-orig
@@ -63,7 +64,7 @@ runs:
 
     - name: Comment on the pull request
       shell: bash
-      working-directory: ${{ runner.temp }}/helm-diff
+      working-directory: ${{ runner.temp }}/flux-diff
       env:
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
@@ -78,7 +79,7 @@ runs:
       run: |
         lib=$GITHUB_ACTION_PATH/../lib
         if [[ -f scope.json ]]; then export KS_SCOPE=$PWD/scope.json; fi
-        "$lib/helm-diff-comment.sh" hr.json ks.json
+        "$lib/flux-diff-comment.sh" hr.json ks.json
         if [[ -f noop ]]; then
           # Refresh an earlier diff comment, never open one for a no-op
           echo "No rendered Flux change as of ${HEAD_SHA::7}." > comment.md
