@@ -8,7 +8,7 @@
 Right in CI and fully standalone: no cluster, no kubeconfig, no agent to install.
 
 > [!IMPORTANT]
-> **Flux only.** The Helm diff and the image discovery read Flux objects
+> **Flux only.** The Flux diff and the image discovery read Flux objects
 > (`Kustomization`, `HelmRelease`, `OCIRepository`, `HelmRepository`...) and render them
 > with [flate](https://github.com/home-operations/flate), an offline Flux renderer.
 > Argo CD, Helmfile, plain Helm or Kustomize repositories are **not** supported.
@@ -17,8 +17,10 @@ Right in CI and fully standalone: no cluster, no kubeconfig, no agent to install
 
 Composite GitHub Actions that comment on every pull request, Renovate ones included:
 
-- 📦 **Helm diff**: the real render of every HelmRelease the pull request touches,
-  chart n-1 with the old values against chart n with the new values.
+- 📦 **Flux diff**: the real render of every HelmRelease the pull request touches,
+  chart n-1 with the old values against chart n with the new values, and of what
+  the git diff hides in Kustomizations: remote resources, other Flux sources, shared
+  bases, CRDs included.
 - 🛡️ **CVE diff**: for every container image the pull request changes, the
   vulnerabilities of the old and new image side by side, then the High/Critical CVEs
   (configurable) of the new image, those the change adds flagged 🆕, and those it
@@ -59,9 +61,11 @@ image (v3.7.17 → v3.7.18, pinned by digest), and enables its PodDisruptionBudg
 
 </details>
 
-<details open><summary><b>Helm diff</b></summary>
+<details open><summary><b>Flux diff</b></summary>
 
-> ### Rendered HelmRelease diff (abcdef0)
+> ### Rendered Flux diff (abcdef0)
+>
+> #### HelmReleases
 >
 > | HelmRelease | Chart | Added | Changed | Removed |
 > |---|---|--:|--:|--:|
@@ -107,6 +111,25 @@ image (v3.7.17 → v3.7.18, pinned by digest), and enables its PodDisruptionBudg
 >
 > </details>
 
+>
+> #### Kustomizations
+>
+> | Kustomization | Why | Path | Added | Changed | Removed |
+> |---|---|---|--:|--:|--:|
+> | `flux-system/gateway-api-crds` | source `gateway-api` | `config/crd/experimental` | 1 | 15 | |
+>
+> <details open><summary><code>flux-system/gateway-api-crds</code>: 1 added, 15 changed</summary>
+>
+> | CustomResourceDefinition | Versions | Fields added / removed |
+> |---|---|---|
+> | `gateways.gateway.networking.k8s.io` | v1 (storage), v1beta1 | v1, v1beta1: +25 (`spec.addresses[].routability`, `spec.listeners[].filters`, `status.addresses[].routability`) |
+> | `grpcroutes.gateway.networking.k8s.io` | v1 (storage) | v1: +6 (`spec.rules[].sessionPersistence.cookie`, `spec.rules[].sessionPersistence.header`) −3 (`spec.rules[].sessionPersistence.cookieConfig`, `spec.rules[].sessionPersistence.sessionName`) |
+> | `xtelemetrypolicies.gateway.networking.x-k8s.io` | new: v1alpha1 (storage) | — |
+> | … | | |
+>
+> Annotations: `gateway.networking.k8s.io/bundle-version`: v1.6.3 → v1.7.0 (13 CRDs)
+>
+> </details>
 </details>
 
 ## A diff of what your cluster will run
@@ -122,9 +145,46 @@ side, then diffs the resulting objects:
 - A values-only change, with no chart bump, is rendered the same way.
 
 Labels and annotations that change with every chart version (`helm.sh/chart`,
-`app.kubernetes.io/version`, `checksum/*`) are ignored as noise. `Secret` and
-`CustomResourceDefinition` objects are left out by default, see
+`app.kubernetes.io/version`, `checksum/*`) are ignored as noise. In HelmReleases,
+`Secret` and `CustomResourceDefinition` objects are left out by default, see
 [Charts using CRDs](#charts-using-crds).
+
+## What the git diff hides in Kustomizations
+
+The pull request diff already shows a manifest edited in place, so the Kustomization
+diff only lists the Kustomizations whose change it does not show, and says why:
+
+| Reason | Example | The git diff shows |
+|---|---|---|
+| `remote` | `resources: [https://…/releases/download/v1.7.0/experimental-install.yaml]`, a `github.com/…//dir?ref=` base | one URL line |
+| `source` | a Kustomization reading another `GitRepository`, `OCIRepository` or `Bucket` | one commit or tag line |
+| `shared` | a `../common` base, a component or a `postBuild.substituteFrom` variable used by several Kustomizations | the shared file only |
+| `edited` | a `kustomization.yaml` that adds a component or a patch, renames or relabels | the reference, not its effect |
+
+Every other changed Kustomization (an edited manifest, an `images:` tag bump in a
+`kustomization.yaml`) is only counted, and on its own never opens a comment: a Renovate
+image or chart bump stays as quiet as before.
+
+Pick the reasons with the `kustomizations` input of `helm-diff`:
+
+```yaml
+- uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.1.0
+  with:
+    path: clusters/my-cluster
+    kustomizations: remote,source # auto (default: remote,source,shared,edited), all, none
+    kustomization-skip-kinds: Secret # the default: CRDs are listed, Secrets left out
+```
+
+In the sections listed:
+
+- **CRDs are summarized**, not diffed: served versions and the fields each version adds
+  or removes. Their raw diff, often hundreds of kilobytes, goes to the run summary only.
+- **Secret values are never shown.** Secrets are left out by default, and when included,
+  each key only reads `<redacted>` or `<redacted, changed>`. flate already drops
+  SOPS-encrypted values.
+- **No duplicates:** the values ConfigMaps and Secrets of a changed HelmRelease are left
+  out, their effect is in its rendered diff. The HelmRelease object itself stays, for
+  changes no render shows, such as `interval` or `driftDetection`.
 
 ## SOPS without the private key
 
@@ -168,9 +228,10 @@ The input **replaces** that list, so repeat the defaults when you add an API:
       external-secrets.io/v1
 ```
 
-The `CustomResourceDefinition` objects themselves are left out of the Helm diff by
-flate. To review a chart's CRD changes too, override flate's excluded kinds at the
-job level and keep only `Secret`:
+The CRDs a Kustomization applies are in its diff, summarized. Those a chart ships are
+left out of the HelmRelease diff by flate. To review them too, override flate's
+excluded kinds at the job level and keep only `Secret` (the Kustomization diff follows
+the `kustomization-skip-kinds` input instead):
 
 ```yaml
   helm-diff:
@@ -184,6 +245,9 @@ Copy [`examples/flux-pr.yaml`](examples/flux-pr.yaml) to `.github/workflows/`, s
 `path` to the directory holding your cluster's Flux bootstrap objects, and pin the
 actions to a release SHA. Drop a job to turn its feature off.
 
+The `helm-diff` job covers HelmReleases and, out of the box, what the git diff hides in
+Kustomizations: see [its options](#what-the-git-diff-hides-in-kustomizations).
+
 ```yaml
 jobs:
   helm-diff:
@@ -196,6 +260,7 @@ jobs:
       - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.1.0
         with:
           path: clusters/my-cluster
+          # kustomizations: auto # remote,source,shared,edited; all; none
 
   image-scan: # read-only: the scanner pulls third-party images
     runs-on: ubuntu-latest
@@ -275,7 +340,7 @@ as `registry:` or `docker-archive:`.
 | Action | What it does |
 |---|---|
 | [`flux-setup`](flux-setup/action.yml) | Checks out the pull request in `./pr` and its base in `./base`, replaces SOPS values with placeholders, installs flate. |
-| [`helm-diff`](helm-diff/action.yml) | Renders the HelmRelease diff and comments it. Needs `pull-requests: write`. |
+| [`helm-diff`](helm-diff/action.yml) | Renders the HelmRelease and Kustomization diff and comments it. Needs `pull-requests: write`. |
 | [`flux-images`](flux-images/action.yml) | Lists the images the pull request changes, each paired with the image it replaces. |
 | [`cve-scan`](cve-scan/action.yml) | Scans each new image and the one it replaces, uploads the scans as an artifact. Run it read-only. |
 | [`cve-report`](cve-report/action.yml) | Downloads the scans and comments the CVE report. Needs `pull-requests: write`. |
@@ -296,7 +361,9 @@ as `registry:` or `docker-archive:`.
 |---|---|---|
 | `path` | required | Cluster directory holding the Flux bootstrap objects |
 | `marker` | `helm-diff` | Tag of the comment |
-| `max-chars` | `60000` | Size above which a diff is replaced by a link to the run summary |
+| `kustomizations` | `auto` | Kustomizations to list: `auto` (`remote,source,shared,edited`), `all`, `none`, or a list of those reasons and `direct` |
+| `kustomization-skip-kinds` | `Secret` | Comma-separated kinds left out of the Kustomization diff |
+| `max-chars` | `60000` | Size above which a section is replaced by a link to the run summary |
 | `token`, `author` | workflow token, `github-actions[bot]` | Identity that writes the comment |
 
 **flux-images** (outputs: `targets`, `notes`)
@@ -357,8 +424,9 @@ as `registry:` or `docker-archive:`.
 
 - Flux only, see above. The render is offline: Helm `lookup` returns nothing, and the
   cluster capabilities are flate's Kubernetes version plus the `api-versions` input.
-- The Helm diff covers HelmReleases. Plain Kustomization manifests are reviewed in the
-  pull request diff itself, and their images are still scanned.
+- Whether the git diff shows a Kustomization change is inferred from the files the pull
+  request changes: an edited manifest under a Kustomization's path counts as shown,
+  even when the same pull request also changes a shared base it uses.
 - Images are read from `image` and `imageName` fields. A custom resource that splits
   an image into `repository` and `tag` fields is not scanned.
 - Pull request events only: the base is the first parent of the merge commit.
@@ -371,9 +439,10 @@ as `registry:` or `docker-archive:`.
 binaries.
 
 The `e2e` workflow renders a fixture Flux change (`tests/e2e/fixtures`) with the flate
-version pinned in `flux-setup`, and checks the images and HelmReleases it must find
-against `tests/e2e/expected`. It runs on every pull request that touches the Flux
-actions, so a flate bump that changes the renders fails its Renovate pull request.
+version pinned in `flux-setup`, and checks the images, HelmReleases and Kustomization
+objects (a CRD among them) it must find against `tests/e2e/expected`. It runs on every
+pull request that touches the Flux actions, so a flate bump that changes the renders
+fails its Renovate pull request.
 
 Renovate keeps the action SHAs (`helpers:pinGitHubActionDigests`) and the flate version
 up to date.

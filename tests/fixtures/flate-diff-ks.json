@@ -1,0 +1,513 @@
+{
+  "changes": [
+    {
+      "kind": "CustomResourceDefinition",
+      "namespace": "",
+      "name": "httproutes.gateway.networking.k8s.io",
+      "status": "changed",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "gateway-api-crds",
+        "path": "config/crd/experimental"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": {
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {
+          "name": "httproutes.gateway.networking.k8s.io",
+          "annotations": {
+            "gateway.networking.k8s.io/bundle-version": "v1.6.3"
+          }
+        },
+        "spec": {
+          "group": "gateway.networking.k8s.io",
+          "scope": "Namespaced",
+          "versions": [
+            {
+              "name": "v1",
+              "served": true,
+              "storage": true,
+              "schema": {
+                "openAPIV3Schema": {
+                  "type": "object",
+                  "properties": {
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "legacy": {
+                                "type": "string"
+                              },
+                              "matches": {
+                                "type": "array"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "new": {
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {
+          "name": "httproutes.gateway.networking.k8s.io",
+          "annotations": {
+            "gateway.networking.k8s.io/bundle-version": "v1.7.0"
+          }
+        },
+        "spec": {
+          "group": "gateway.networking.k8s.io",
+          "scope": "Namespaced",
+          "versions": [
+            {
+              "name": "v1",
+              "served": true,
+              "storage": true,
+              "schema": {
+                "openAPIV3Schema": {
+                  "type": "object",
+                  "properties": {
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "matches": {
+                                "type": "array"
+                              },
+                              "cors": {
+                                "type": "object",
+                                "properties": {
+                                  "allowOrigins": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "maxAge": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "v1beta1",
+              "served": true,
+              "storage": false,
+              "schema": {
+                "openAPIV3Schema": {
+                  "type": "object",
+                  "properties": {
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "matches": {
+                                "type": "array"
+                              },
+                              "cors": {
+                                "type": "object",
+                                "properties": {
+                                  "allowOrigins": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "maxAge": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "CustomResourceDefinition",
+      "namespace": "",
+      "name": "xtelemetrypolicies.gateway.networking.x-k8s.io",
+      "status": "added",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "gateway-api-crds",
+        "path": "config/crd/experimental"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": null,
+      "new": {
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {
+          "name": "xtelemetrypolicies.gateway.networking.x-k8s.io"
+        },
+        "spec": {
+          "group": "gateway.networking.x-k8s.io",
+          "versions": [
+            {
+              "name": "v1alpha1",
+              "served": true,
+              "storage": true,
+              "schema": {
+                "openAPIV3Schema": {
+                  "type": "object",
+                  "properties": {
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "targetRefs": {
+                          "type": "array"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "ValidatingAdmissionPolicy",
+      "namespace": "",
+      "name": "safe-upgrades.gateway.networking.k8s.io",
+      "status": "changed",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "gateway-api-crds",
+        "path": "config/crd/experimental"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": {
+        "apiVersion": "admissionregistration.k8s.io/v1",
+        "kind": "ValidatingAdmissionPolicy",
+        "metadata": {
+          "name": "safe-upgrades.gateway.networking.k8s.io"
+        },
+        "spec": {
+          "validations": [
+            {
+              "message": "old rule"
+            }
+          ]
+        }
+      },
+      "new": {
+        "apiVersion": "admissionregistration.k8s.io/v1",
+        "kind": "ValidatingAdmissionPolicy",
+        "metadata": {
+          "name": "safe-upgrades.gateway.networking.k8s.io"
+        },
+        "spec": {
+          "validations": [
+            {
+              "message": "new rule"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "GitRepository",
+      "namespace": "flux-system",
+      "name": "gateway-api",
+      "status": "changed",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "flux-system",
+        "path": "clusters/homelab"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "name": "gateway-api",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "ref": {
+            "commit": "c0836133"
+          },
+          "url": "https://github.com/kubernetes-sigs/gateway-api"
+        }
+      },
+      "new": {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "name": "gateway-api",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "ref": {
+            "commit": "e26d183d"
+          },
+          "url": "https://github.com/kubernetes-sigs/gateway-api"
+        }
+      }
+    },
+    {
+      "kind": "HelmRelease",
+      "namespace": "flux-system",
+      "name": "traefik",
+      "status": "changed",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "traefik",
+        "path": "infra/traefik"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "name": "traefik",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "chartRef": {
+            "kind": "OCIRepository",
+            "name": "traefik"
+          },
+          "valuesFrom": [
+            {
+              "kind": "ConfigMap",
+              "name": "traefik-values-aaaa",
+              "valuesKey": "values.yaml"
+            }
+          ]
+        }
+      },
+      "new": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "name": "traefik",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "chartRef": {
+            "kind": "OCIRepository",
+            "name": "traefik"
+          },
+          "valuesFrom": [
+            {
+              "kind": "ConfigMap",
+              "name": "traefik-values-bbbb",
+              "valuesKey": "values.yaml"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "ConfigMap",
+      "namespace": "flux-system",
+      "name": "traefik-values-aaaa",
+      "status": "removed",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "traefik",
+        "path": "infra/traefik"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "traefik-values-aaaa",
+          "namespace": "flux-system"
+        },
+        "data": {
+          "values.yaml": "replicas: 1"
+        }
+      },
+      "new": null
+    },
+    {
+      "kind": "ConfigMap",
+      "namespace": "flux-system",
+      "name": "traefik-values-bbbb",
+      "status": "added",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "traefik",
+        "path": "infra/traefik"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "traefik-values-bbbb",
+          "namespace": "flux-system"
+        },
+        "data": {
+          "values.yaml": "replicas: 2"
+        }
+      }
+    },
+    {
+      "kind": "Secret",
+      "namespace": "app",
+      "name": "app-secret",
+      "status": "changed",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "app",
+        "path": "apps/app"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+          "name": "app-secret",
+          "namespace": "app"
+        },
+        "data": {
+          "password": "b2xkLXNlY3JldA==",
+          "user": "YWRtaW4="
+        },
+        "stringData": {
+          "token": "old-plain-token"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+          "name": "app-secret",
+          "namespace": "app"
+        },
+        "data": {
+          "password": "bmV3LXNlY3JldA==",
+          "user": "YWRtaW4=",
+          "apikey": "YWRkZWQta2V5"
+        },
+        "stringData": {
+          "token": "new-plain-token"
+        }
+      }
+    },
+    {
+      "kind": "Deployment",
+      "namespace": "whoami",
+      "name": "whoami",
+      "status": "changed",
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "whoami",
+        "path": "apps/whoami"
+      },
+      "oldChart": "",
+      "newChart": "",
+      "old": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "whoami",
+          "namespace": "whoami"
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "containers": [
+                {
+                  "name": "whoami",
+                  "image": "traefik/whoami:v1.10.4"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "name": "whoami",
+          "namespace": "whoami"
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "containers": [
+                {
+                  "name": "whoami",
+                  "image": "traefik/whoami:v1.11.0"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "suppressed": []
+}

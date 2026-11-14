@@ -29,6 +29,9 @@ jobs:
       - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.1.0
         with:
           path: clusters/my-cluster
+          # What the git diff hides in Kustomizations: auto (remote,source,shared,edited),
+          # all, none, or a list of those reasons
+          # kustomizations: auto
 
   image-scan:
     # Read-only token: the scanner pulls third-party images and never sees a writable one
