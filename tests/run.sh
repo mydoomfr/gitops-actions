@@ -125,20 +125,20 @@ echo '[{"id": 9, "user": {"login": "github-actions[bot]"}, "body": "<!-- cves --
 "$lib/pr-comment.sh" cves body.md
 check "edits the comment carrying the marker" grep -q '^PATCH 9 <!-- cves -->' "$GH_LOG"
 
-echo "# helm-diff"
-mkdir "$work/helm-diff" && cd "$work/helm-diff"
-HEAD_SHA=abcdef0123456 "$lib/helm-diff-comment.sh" "$fixtures/flate-diff.json"
+echo "# flux-diff"
+mkdir "$work/flux-diff" && cd "$work/flux-diff"
+HEAD_SHA=abcdef0123456 "$lib/flux-diff-comment.sh" "$fixtures/flate-diff.json"
 check "one row per producer" bash -c 'grep -q "^| \`flux-system/traefik\` | \`traefik\` 42.3.2 |  | 1 |  |" comment.md'
 check "a unified diff per producer" grep -q '^+          image: docker.io/traefik@sha256:b' comment.md
 check "warns about suppressed renders" grep -q '| `apps/broken` | PR | 3 |' comment.md
 echo '{"changes": [], "suppressed": []}' > empty.json
-"$lib/helm-diff-comment.sh" empty.json
+"$lib/flux-diff-comment.sh" empty.json
 check "writes noop when nothing changed" test -f noop
 
-echo "# helm-diff with Kustomizations"
+echo "# flux-diff with Kustomizations"
 mkdir "$work/ks-diff" && cd "$work/ks-diff"
 : > hr.json
-HEAD_SHA=abcdef0123456 RUN_URL=https://example.com/run "$lib/helm-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
+HEAD_SHA=abcdef0123456 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "one row per Kustomization with its path" grep -q '^| `flux-system/gateway-api-crds` | — | `config/crd/experimental` | 1 | 2 |  |$' comment.md
 check "diffs plain manifests" grep -q '^+          image: traefik/whoami:v1.11.0$' comment.md
 check "summarizes a CRD change" grep -q '^| `httproutes.gateway.networking.k8s.io` | v1 (storage) → v1 (storage), v1beta1 | v1: +3 (`spec.rules\[\].cors`) −1 (`spec.rules\[\].legacy`) |$' comment.md
@@ -147,10 +147,10 @@ check "keeps raw CRD diffs out of the comment" bash -c '! grep -q "^--- CustomRe
 check "never shows a Secret value" bash -c '! grep -E "b2xkLXNlY3JldA|bmV3LXNlY3JldA|YWRtaW4|YWRkZWQta2V5|plain-token" comment-full.md'
 check "flags the Secret keys that changed" bash -c 'grep -q "^+  password: <redacted, changed>$" comment.md && grep -q "^ *user: <redacted>$" comment.md && grep -q "^+  apikey: <redacted>$" comment.md'
 check "leaves out the values ConfigMaps of a changed HelmRelease" bash -c '! grep -q "ConfigMap flux-system/traefik-values" comment-full.md && grep -q "^--- HelmRelease flux-system/traefik$" comment.md'
-"$lib/helm-diff-comment.sh" "$work/helm-diff/empty.json" hr.json
+"$lib/flux-diff-comment.sh" "$work/flux-diff/empty.json" hr.json
 check "writes noop when neither render changed" test -f noop
 rm -f noop
-MAX_CHARS=1500 RUN_URL=https://example.com/run "$lib/helm-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
+MAX_CHARS=1500 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "links the run summary for a section over MAX_CHARS" bash -c 'grep -q "^- \`flux-system/gateway-api-crds\`: diff too long for a comment, see the \[run summary\](https://example.com/run)\.$" comment.md && grep -q "httproutes" comment-full.md'
 
 echo "# Kustomization scope"
@@ -201,39 +201,44 @@ check "a dot in a path only matches itself" bash -c 'jq -e ".[\"flux-system/dott
 check "a root path sees every kustomization file the pull request edits" scope root edited
 check "a path in another Flux source is external" bash -c 'jq -e ".[\"flux-system/crds\"] == {why: \"external\", source: \"gateway-api\"}" scope.json'
 
-echo "# helm-diff with the Kustomization scope"
+echo "# flux-diff with the Kustomization scope"
 mkdir "$work/ks-scope" && cd "$work/ks-scope"
 : > hr.json
 jq -n '{"flux-system/gateway-api-crds": {why: "external", source: "gateway-api"}, "flux-system/app": {why: "indirect", source: ""},
   "flux-system/flux-system": {why: "direct", source: ""}, "flux-system/traefik": {why: "direct", source: ""},
   "flux-system/whoami": {why: "direct", source: ""}}' > scope.json
-KS_SCOPE=scope.json "$lib/helm-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
+KS_SCOPE=scope.json "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "says why a Kustomization is shown" bash -c 'grep -q "^| \`flux-system/gateway-api-crds\` | source \`gateway-api\` |" comment.md && grep -q "^| \`flux-system/app\` | shared base or variable |" comment.md'
 check "only counts what the pull request diff shows" bash -c '! grep -q "whoami" comment-full.md && grep -q "^_3 more Kustomizations changed exactly as the pull request diff shows._$" comment.md'
-KS_SCOPE=scope.json KS_MODE=all "$lib/helm-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
+KS_SCOPE=scope.json KS_MODE=all "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "shows every Kustomization in all mode" bash -c 'grep -q "^| \`flux-system/whoami\` | edited here |" comment.md && ! grep -q "more Kustomization" comment.md'
-KS_SCOPE=scope.json KS_MODE=remote,source "$lib/helm-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
+KS_SCOPE=scope.json KS_MODE=remote,source "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "lists only the chosen reasons" bash -c 'grep -q "^| \`flux-system/gateway-api-crds\` |" comment.md && ! grep -q "^| \`flux-system/app\` |" comment.md'
 check "counts the Kustomizations a reason list leaves out" bash -c 'grep -q "^_1 more Kustomization changed, left out by the \`kustomizations\` input._$" comment.md && grep -q "^_3 more Kustomizations changed exactly as the pull request diff shows._$" comment.md'
-check "rejects an unknown kustomizations value" bash -c '! KS_SCOPE=scope.json KS_MODE=remote,bogus "$1" hr.json "$2" 2> err.txt && grep -q "unknown value .bogus." err.txt' _ "$lib/helm-diff-comment.sh" "$fixtures/flate-diff-ks.json"
+check "rejects an unknown kustomizations value" bash -c '! KS_SCOPE=scope.json KS_MODE=remote,bogus "$1" hr.json "$2" 2> err.txt && grep -q "unknown value .bogus." err.txt' _ "$lib/flux-diff-comment.sh" "$fixtures/flate-diff-ks.json"
 rm -f noop
-KS_SCOPE=scope.json KS_MODE=none "$lib/helm-diff-comment.sh" "$fixtures/flate-diff.json" "$fixtures/flate-diff-ks.json"
+KS_SCOPE=scope.json KS_MODE=none "$lib/flux-diff-comment.sh" "$fixtures/flate-diff.json" "$fixtures/flate-diff-ks.json"
 check "lists no Kustomization with none" bash -c '! grep -q "^#### Kustomizations" comment.md && grep -q "^#### HelmReleases" comment.md'
 jq '.changes |= map(if .name == "xtelemetrypolicies.gateway.networking.x-k8s.io" then .status = "removed" | .old = .new | .new = null
     elif .kind == "Secret" then .status = "added" | .old = null else . end)' "$fixtures/flate-diff-ks.json" > removed.json
-"$lib/helm-diff-comment.sh" hr.json removed.json
+"$lib/flux-diff-comment.sh" hr.json removed.json
 check "summarizes a removed CRD" grep -q '^| `xtelemetrypolicies.gateway.networking.x-k8s.io` | removed | — |$' comment.md
 check "never shows the values of an added Secret" bash -c '! grep -E "bmV3LXNlY3JldA|YWRtaW4|YWRkZWQta2V5|new-plain-token" comment-full.md && grep -q "^+  password: <redacted>$" comment.md'
 jq '[., {changes: [.changes[] | select(.kind == "Deployment") | .parent.name = "whoami-prod"]}]' "$fixtures/flate-diff-ks.json" > multi.json
-"$lib/helm-diff-comment.sh" hr.json multi.json
+"$lib/flux-diff-comment.sh" hr.json multi.json
 check "merges multi-cluster Kustomization outputs" bash -c 'grep -q "^| \`flux-system/whoami\` |" comment.md && grep -q "^| \`flux-system/whoami-prod\` |" comment.md'
 jq '.suppressed = [{parent: {kind: "Kustomization", namespace: "flux-system", name: "broken"}, side: "current", count: 2, reason: "remote resource unreachable"}]' \
   "$fixtures/flate-diff-ks.json" > suppressed.json
-PARTIAL=true RUN_URL=https://example.com/run "$lib/helm-diff-comment.sh" hr.json suppressed.json
+PARTIAL=true RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" hr.json suppressed.json
 check "warns about a Kustomization that failed to render" bash -c 'grep -q "^> Some HelmReleases or Kustomizations failed to render" comment.md && grep -q "^| \`flux-system/broken\` | PR | 2 | remote resource unreachable |$" comment.md'
 jq 'with_entries(.value.why = "direct")' scope.json > direct.json
-KS_SCOPE=direct.json "$lib/helm-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
+KS_SCOPE=direct.json "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "opens no comment when the pull request diff shows everything" test -f noop
+
+echo "# helm-diff alias"
+check "helm-diff stays a copy of flux-diff" diff \
+  <(yq -o json 'del(.name, .description)' "$root/flux-diff/action.yml") \
+  <(yq -o json 'del(.name, .description)' "$root/helm-diff/action.yml")
 
 echo
 if (( failures > 0 )); then echo "$failures failure(s)"; exit 1; fi

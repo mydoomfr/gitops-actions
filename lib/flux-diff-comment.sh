@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: helm-diff-comment.sh <diff.json>...
+# Usage: flux-diff-comment.sh <diff.json>...
 # Turns `flate diff hr|ks -o json` outputs into comment.md: one summary table per kind of
 # producer (HelmRelease, Kustomization), then each producer's changes in a collapsed
 # section. CustomResourceDefinitions are summarized (served versions, fields added or

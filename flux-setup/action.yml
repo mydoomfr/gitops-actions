@@ -3,7 +3,7 @@ name: flux-setup
 description: >-
   Check out a pull request in ./pr and its base in ./base, make both renderable
   without the SOPS key and install flate. Run it first in every job that uses
-  helm-diff or flux-images.
+  flux-diff or flux-images.
 
 inputs:
   sops-values-pattern:

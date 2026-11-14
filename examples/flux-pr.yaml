@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  helm-diff:
+  flux-diff:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -26,7 +26,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
-      - uses: mydoomfr/gitops-actions/helm-diff@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.1.0
         with:
           path: clusters/my-cluster
           # What the git diff hides in Kustomizations: auto (remote,source,shared,edited),
