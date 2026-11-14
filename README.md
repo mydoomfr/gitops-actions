@@ -34,7 +34,18 @@ comment says so, and no new one is created.
 ## Preview
 
 Example: a pull request that upgrades the traefik chart (42.3.2 → 42.4.0) and its
-image (v3.7.17 → v3.7.18, pinned by digest), and enables its PodDisruptionBudget.
+image (v3.7.17 → v3.7.18, pinned by digest), enables its PodDisruptionBudget, and adds
+a shared component to the whoami Kustomization. That last change is two lines in the
+pull request diff:
+
+```diff
+ resources:
+   - deployment.yaml
++components:
++  - ../../components/common-labels
+```
+
+and below, what it really changes once rendered.
 
 <details open><summary><b>CVE diff</b></summary>
 
@@ -116,20 +127,33 @@ image (v3.7.17 → v3.7.18, pinned by digest), and enables its PodDisruptionBudg
 >
 > | Kustomization | Why | Path | Added | Changed | Removed |
 > |---|---|---|--:|--:|--:|
-> | `flux-system/gateway-api-crds` | source `gateway-api` | `config/crd/experimental` | 1 | 15 | |
+> | `flux-system/whoami` | kustomization edited | `apps/whoami` | | 1 | |
 >
-> <details open><summary><code>flux-system/gateway-api-crds</code>: 1 added, 15 changed</summary>
+> <details open><summary><code>flux-system/whoami</code>: 1 changed</summary>
 >
-> | CustomResourceDefinition | Versions | Fields added / removed |
-> |---|---|---|
-> | `gateways.gateway.networking.k8s.io` | v1 (storage), v1beta1 | v1, v1beta1: +25 (`spec.addresses[].routability`, `spec.listeners[].filters`, `status.addresses[].routability`) |
-> | `grpcroutes.gateway.networking.k8s.io` | v1 (storage) | v1: +6 (`spec.rules[].sessionPersistence.cookie`, `spec.rules[].sessionPersistence.header`) −3 (`spec.rules[].sessionPersistence.cookieConfig`, `spec.rules[].sessionPersistence.sessionName`) |
-> | `xtelemetrypolicies.gateway.networking.x-k8s.io` | new: v1alpha1 (storage) | — |
-> | … | | |
->
-> Annotations: `gateway.networking.k8s.io/bundle-version`: v1.6.3 → v1.7.0 (13 CRDs)
+> ```diff
+> --- Deployment whoami/whoami
+> +++ Deployment whoami/whoami
+> @@ -4,6 +4,7 @@
+>    labels:
+>      kustomize.toolkit.fluxcd.io/name: whoami
+>      kustomize.toolkit.fluxcd.io/namespace: flux-system
+> +    team: platform
+>    name: whoami
+>    namespace: whoami
+>  spec:
+> @@ -18,3 +19,6 @@
+>        containers:
+>          - image: docker.io/traefik/whoami:v1.10.4
+>            name: whoami
+> +          resources:
+> +            limits:
+> +              memory: 128Mi
+> ```
 >
 > </details>
+>
+> _1 more Kustomization changed exactly as the pull request diff shows._
 </details>
 
 ## A diff of what your cluster will run
@@ -168,7 +192,7 @@ image or chart bump stays as quiet as before.
 Pick the reasons with the `kustomizations` input of `flux-diff`:
 
 ```yaml
-- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.1.0
+- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.2.0
   with:
     path: clusters/my-cluster
     kustomizations: remote,source # auto (default: remote,source,shared,edited), all, none
@@ -220,7 +244,7 @@ The default covers Prometheus Operator, Gateway API, cert-manager and VolumeSnap
 The input **replaces** that list, so repeat the defaults when you add an API:
 
 ```yaml
-- uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
+- uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.2.0
   with:
     api-versions: >-
       monitoring.coreos.com/v1 monitoring.coreos.com/v1alpha1
@@ -256,8 +280,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
-      - uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.2.0
+      - uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.2.0
         with:
           path: clusters/my-cluster
           # kustomizations: auto # remote,source,shared,edited; all; none
@@ -267,12 +291,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.1.0
-      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.2.0
+      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.2.0
         id: images
         with:
           path: clusters/my-cluster
-      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.2.0
         with:
           targets: ${{ steps.images.outputs.targets }}
           notes: ${{ steps.images.outputs.notes }}
@@ -283,7 +307,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.2.0
 ```
 
 ```mermaid
@@ -311,7 +335,7 @@ per image, one `cve-report` job merging them into a single comment:
         with:
           name: my-app-image
           path: ${{ runner.temp }}
-      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.2.0
         with:
           name: my-app
           new-source: docker-archive:${{ runner.temp }}/image.tar
@@ -326,7 +350,7 @@ per image, one `cve-report` job merging them into a single comment:
     permissions:
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.1.0
+      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.2.0
         with:
           artifact-pattern: "*-cves"
           name-header: App
