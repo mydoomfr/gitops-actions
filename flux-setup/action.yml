@@ -8,9 +8,10 @@ description: >-
 inputs:
   sops-values-pattern:
     description: >-
-      find -name pattern of the SOPS-encrypted Helm values files whose encrypted
-      leaves get typed placeholders; empty to leave them encrypted
-    default: "*values.enc.yaml"
+      find -name pattern of the YAML files whose SOPS-encrypted documents get
+      placeholders: Helm values, and the Secrets and ConfigMaps a valuesFrom or
+      substituteFrom reads; empty to leave them all encrypted
+    default: "*.y*ml"
   api-versions:
     description: >-
       Whitespace-separated CRD API versions that offline helm should report as
@@ -33,21 +34,12 @@ runs:
       run: git -C pr worktree add ../base HEAD^1
 
     - name: Replace SOPS values with placeholders
-      if: ${{ inputs.sops-values-pattern != '' }}
       # No SOPS key in CI: keep keys, maps and lists, swap each encrypted leaf for a
-      # typed dummy. "# ..." is a YAML comment, valid wherever a chart inlines it,
-      # except a *name/*Name key that may become metadata.name: flate rejects an
-      # empty one, so those get a DNS label.
+      # typed dummy, see lib/sops-placeholders.sh
       shell: bash
       env:
         PATTERN: ${{ inputs.sops-values-pattern }}
-      run: |
-        find pr base -name "$PATTERN" -print0 | xargs -0 -r -n1 yq -i '
-          del(.sops) |
-          (.. | select(tag == "!!str" and test("^ENC\[AES256_GCM,.*,type:bool\]$"))) = true |
-          (.. | select(tag == "!!str" and test("^ENC\[AES256_GCM,.*,type:(int|float)\]$"))) = 1 |
-          (.. | select(tag == "!!str" and test("^ENC\[AES256_GCM,") and (path | .[-1] | tostring | test("(?i)name$")))) = "sops-redacted" |
-          (.. | select(tag == "!!str" and test("^ENC\[AES256_GCM,"))) = "# sops-redacted"'
+      run: '"$GITHUB_ACTION_PATH/../lib/sops-placeholders.sh" "$PATTERN" pr base'
 
     - uses: home-operations/flate/action@bbb6ebc344da051752dbdb1b413860ceffcfb63d # v0.7.3
       with:

@@ -12,6 +12,7 @@ spec:
     metadata:
       labels:
         app: whoami
+        env: ${CLUSTER_ENV}
     spec:
       containers:
         - name: whoami

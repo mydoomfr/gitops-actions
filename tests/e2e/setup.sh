@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Replaces pr/ and base/ in the current directory with the fixture trees, laid out like
-# flux-setup does: pr/ a git checkout, base/ a worktree of its first parent.
+# flux-setup does: pr/ a git checkout, base/ a worktree of its first parent, SOPS
+# values swapped for placeholders.
 # fixtures/base holds the whole tree, fixtures/pr only the files the change touches.
 set -euo pipefail
 
@@ -15,3 +16,5 @@ git -C pr add -A && commit base
 cp -R "$fixtures/pr/." pr/
 git -C pr add -A && commit pr
 git -C pr worktree add -q ../base HEAD^1
+# With the default pattern of flux-setup, so that the SOPS checks guard it
+"$fixtures/../../../lib/sops-placeholders.sh" "$(yq '.inputs.sops-values-pattern.default' "$fixtures/../../../flux-setup/action.yml")" pr base

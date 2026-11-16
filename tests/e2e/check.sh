@@ -38,10 +38,16 @@ for release in traefik podinfo; do
   check "renders the $release Deployment" \
     jq -e --arg r "$release" 'any(.changes[]; .parent.name == $r and .kind == "Deployment")' diff.json
 done
+check "renders a valuesFrom read from a SOPS Secret" \
+  jq -e 'any(.changes[]; .parent.name == "podinfo" and .kind == "Deployment"
+    and any(.new.spec.template.spec.containers[].env[]?; .name == "PODINFO_UI_MESSAGE" and .value == "sops-redacted"))' diff.json
 # Same Kustomization render as the flux-diff action, CRDs included
 rc=0
 flate diff ks --skip-kinds Secret --path "$root/pr/clusters/e2e" --path-orig "$root/base/clusters/e2e" -o json > ks.json || rc=$?
 check "renders Kustomizations without error" test "$rc" = 0
+check "substitutes a variable read from a SOPS Secret" \
+  jq -e 'any(.changes[]; .parent.name == "whoami" and .kind == "Deployment"
+    and .new.spec.template.metadata.labels.env == "sops-redacted")' ks.json
 "$lib/kustomization-scope.sh" ks.json "$root/pr" "$root/base" > scope.json
 KS_SCOPE=scope.json HEAD_SHA=0000000 "$lib/flux-diff-comment.sh" diff.json ks.json
 check "comments the chart bump" grep -q '^| `flux-system/podinfo` | `podinfo` 6.16.0 → 6.17.0 |' comment.md

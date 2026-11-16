@@ -24,3 +24,8 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: podinfo
+  valuesFrom:
+    - kind: Secret
+      name: podinfo-values
+      valuesKey: message
+      targetPath: ui.message
