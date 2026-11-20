@@ -12,6 +12,7 @@ on:
       - helm-diff/**
       - lib/**
       - tests/e2e/**
+      - tests/fixtures/**
       - .github/workflows/e2e.yaml
   push:
     branches: [main]

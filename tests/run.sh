@@ -235,6 +235,46 @@ jq 'with_entries(.value.why = "direct")' scope.json > direct.json
 KS_SCOPE=direct.json "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "opens no comment when the pull request diff shows everything" test -f noop
 
+echo "# SOPS placeholders"
+# Fixtures encrypted with a throwaway age key, discarded: no test can decrypt them
+mkdir -p "$work"/sops/{apps,off,narrow,edge,tpl}
+for dir in apps off narrow; do cp "$fixtures/sops/secrets.sops.yaml" "$fixtures/sops/values.enc.yaml" "$work/sops/$dir/"; done
+cp "$fixtures/sops/edge.sops.yaml" "$work/sops/edge/"
+cp "$fixtures/sops/template.sops.tpl" "$fixtures/sops/values.enc.yaml" "$work/sops/tpl/"
+placeholders() { "$lib/sops-placeholders.sh" "$@" 2>&1 || echo "exit $?"; } # <pattern> <dir>...
+out=$(placeholders "*.y*ml" "$work/sops/apps")
+placeholders "" "$work/sops/off" > /dev/null
+placeholders "*values.enc.yaml" "$work/sops/narrow" > /dev/null
+placeholders "*.y*ml" "$work/sops/edge" > /dev/null
+tpl=$(placeholders "*" "$work/sops/tpl")
+yqj() { yq -o json -I0 "$1" "$work/sops/apps/$2"; }
+check "drops the sops metadata" bash -c '! grep -q "^sops:\|ENC\[" "$0"/*.yaml' "$work/sops/apps"
+check "warns about nothing it can parse" test -z "$out"
+check "leaves SOPS files alone with an empty pattern" bash -c 'cmp -s "$0/secrets.sops.yaml" "$1/secrets.sops.yaml" && cmp -s "$0/values.enc.yaml" "$1/values.enc.yaml"' "$fixtures/sops" "$work/sops/off"
+check "only touches the files the pattern names" bash -c 'cmp -s "$0/secrets.sops.yaml" "$1/secrets.sops.yaml" && ! grep -q "ENC\[" "$1/values.enc.yaml"' "$fixtures/sops" "$work/sops/narrow"
+check "keeps plaintext keys" test "$(yqj 'select(.metadata.name == "cnpg-values").stringData.plain' secrets.sops.yaml)" = '"kept"'
+check "gives a Secret stringData key a variable-safe placeholder" \
+  test "$(yqj 'select(.metadata.name == "cnpg-values").stringData.s3-secret-key' secrets.sops.yaml)" = '"sops-redacted"'
+check "gives a whole values key an empty YAML document" \
+  test "$(yqj 'select(.metadata.name == "cnpg-values").stringData."values.yaml"' secrets.sops.yaml)" = '"# sops-redacted"'
+check "base64-encodes the placeholder in Secret data" \
+  test "$(yqj 'select(.metadata.name == "cluster-secrets").data | .PLAIN + "," + .DOMAIN | split(",") | map(@base64d) | join(",")' secrets.sops.yaml)" = '"kept,sops-redacted"'
+check "gives ConfigMap data a plain placeholder" \
+  test "$(yqj 'select(.kind == "ConfigMap").data.TIMEZONE' secrets.sops.yaml)" = '"sops-redacted"'
+check "adds no field" test "$(yqj 'select(.kind == "ConfigMap" or .metadata.name == "cluster-secrets") | (has("stringData") or has("binaryData"))' secrets.sops.yaml | sort -u)" = false
+check "types the placeholders of a values file" \
+  test "$(yqj '.' values.enc.yaml)" = '{"auth":{"password":"# sops-redacted","existingSecretName":"sops-redacted"},"replicas":1,"enabled":true}'
+edge() { yq -o json -I0 "$1" "$work/sops/edge/edge.sops.yaml"; }
+check "base64-encodes the placeholder in ConfigMap binaryData" \
+  test "$(edge 'select(document_index == 0) | (.data.T == "sops-redacted" and (.binaryData.B | @base64d) == "sops-redacted" and (has("sops") | not))')" = true
+check "leaves a manifest encrypted without encrypted_regex to flate" \
+  test "$(edge 'select(document_index == 1) | ((.kind | test("^ENC\\[")) and has("sops"))')" = true
+check "keeps the sops key of a plaintext document" test "$(edge 'select(document_index == 2).sops.enabled')" = true
+check "gives placeholders to values encrypted whole, root kind included" \
+  test "$(edge 'select(document_index == 3)')" = '{"kind":"# sops-redacted","pw":"# sops-redacted"}'
+check "keeps every document of a mixed file, list root included" test "$(edge 'document_index' | wc -l | tr -d ' ')" = 5
+check "warns about a file it cannot parse, and goes on" bash -c '[[ $0 == *"::warning file="* && $0 != *"exit "* ]] && cmp -s "$1/template.sops.tpl" "$2/template.sops.tpl" && ! grep -q "ENC\[" "$2/values.enc.yaml"' "$tpl" "$fixtures/sops" "$work/sops/tpl"
+
 echo "# helm-diff alias"
 check "helm-diff stays a copy of flux-diff" diff \
   <(yq -o json 'del(.name, .description)' "$root/flux-diff/action.yml") \

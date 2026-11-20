@@ -1,0 +1,37 @@
+# Fake SOPS documents: the placeholders never check the crypto
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-bin
+data:
+  T: 'ENC[AES256_GCM,data:AAAA,iv:BB,tag:CC,type:str]'
+binaryData:
+  B: 'ENC[AES256_GCM,data:AAAA,iv:BB,tag:CC,type:str]'
+sops:
+    mac: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
+---
+# Encrypted without encrypted_regex: left to flate
+apiVersion: 'ENC[AES256_GCM,data:AAAA,iv:BB,tag:CC,type:str]'
+kind: 'ENC[AES256_GCM,data:AAAA,iv:BB,tag:CC,type:str]'
+metadata:
+  name: 'ENC[AES256_GCM,data:AAAA,iv:BB,tag:CC,type:str]'
+data:
+  X: 'ENC[AES256_GCM,data:AAAA,iv:BB,tag:CC,type:str]'
+sops:
+    mac: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
+---
+# Plaintext with its own sops key
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plain-sops-key
+sops:
+  enabled: true
+---
+# Helm values encrypted whole, with a root kind: placeholders all the same
+kind: 'ENC[AES256_GCM,data:AAAA,iv:BB,tag:CC,type:str]'
+pw: 'ENC[AES256_GCM,data:AAAA,iv:BB,tag:CC,type:str]'
+sops:
+    mac: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
+---
+- list-root

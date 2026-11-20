@@ -1,0 +1,23 @@
+# Read by the podinfo HelmRelease valuesFrom, encrypted with a discarded age key
+apiVersion: v1
+kind: Secret
+metadata:
+    name: podinfo-values
+    namespace: flux-system
+stringData:
+    message: ENC[AES256_GCM,data:4UwjWr3VZdO4XnVFsNttcHe3BTWN3rOD,iv:rkAM/tlgOYx4u2Vp3NxKE8gaGJC5kJhv/9YmMo7k+80=,tag:uZsSZNI5WGlTShavVIGI2w==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA3R2VmSGNQenRIbjF3ZTVv
+            MWZqNko2d1JRK01HTk5Pc2pyemd2N1EvSGc4CkZCVUxIZmtwYnA1KzY2MXhlTS8z
+            Wlp0VW9PZ0Nlbmc2am9NMU1OeW8wZ1UKLS0tIFJmd1g0STh1eXNKdnBBUTV2cURh
+            aTQ5MGxaT0hFVitJcDJua1E4cTdzcVEKr4ixNcocd/h1PCSMTZyAUcYvdG7sIjUH
+            Fr0jlRml/a2FDoVXbQf0vpDcMYJTBwGJh22rLiwNfWG5KJuVUK+sfw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1e4l40xpcehjd0uggl9t2m9lspcegr6nqkfr3re2xlnmxmqynef3sjfwly3
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-11-16T22:53:37Z"
+    mac: ENC[AES256_GCM,data:0LGpIlcPkXlWpZFui1v8q2UZIkMjNFE3s9oX9gJqO1OPcQEBcwUnPx+1dHbkcRVVNq0G9Ck6EiR8gG7nIPeJH+vDyJ+z9jrjowzIxAF7ZPEiUxkzBmlsnrifoke0g04SlTkCgOIF9hXRI2b1Ce7Nsg2GI3QwLgJ8yeWXh5Xb7Fw=,iv:0pfQLXg33NJ4oha1PA9hscCN+vhzonW4UKDdsCexPBU=,tag:k6G9LVjD2S29lmhLP9wwZw==,type:str]
+    version: 3.13.3

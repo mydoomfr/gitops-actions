@@ -25,8 +25,9 @@ Composite GitHub Actions that comment on every pull request, Renovate ones inclu
   vulnerabilities of the old and new image side by side, then the High/Critical CVEs
   (configurable) of the new image, those the change adds flagged 🆕, and those it
   fixes. Scanned by [grype](https://github.com/anchore/grype).
-- 🔐 **SOPS without the key**: encrypted Helm values are rendered with placeholders, so
-  CI never needs the private key.
+- 🔐 **SOPS without the key**: encrypted Helm values and the Secrets a `valuesFrom` or
+  a `substituteFrom` reads are rendered with placeholders, so CI never needs the
+  private key.
 
 Each comment is updated on every push. When nothing is left to report, an existing
 comment says so, and no new one is created.
@@ -229,8 +230,30 @@ replicas: ENC[AES256_GCM,...,type:int]        replicas: 1
 Strings become `# sops-redacted`, a YAML comment wherever a chart inlines it, except
 keys ending in `name` that may end up in `metadata.name`, which get a valid DNS label.
 Since both sides get the same placeholders, a change to an encrypted value is not
-shown, and an encrypted `false` renders as `true`. The files are matched by the
-`sops-values-pattern` input (`*values.enc.yaml`).
+shown, and an encrypted `false` renders as `true`. The files are the YAML files
+matching the `sops-values-pattern` input (`*.y*ml`) that hold SOPS metadata.
+
+### Secrets read by `valuesFrom` and `substituteFrom`
+
+flate drops the encrypted keys of a Secret, so a HelmRelease whose `valuesFrom` needs
+one fails to render, and a Kustomization `postBuild.substituteFrom` variable is left
+empty. `flux-setup` gives placeholders to the `data`, `stringData` and `binaryData`
+of SOPS-encrypted Secrets and ConfigMaps too, without any dummy file to maintain:
+
+```yaml
+stringData:                                   # what flate reads
+  s3-secret-key: ENC[AES256_GCM,...]            s3-secret-key: sops-redacted
+  values.yaml: ENC[AES256_GCM,...]              values.yaml: "# sops-redacted"
+data:
+  DOMAIN: ENC[AES256_GCM,...]                   DOMAIN: c29wcy1yZWRhY3RlZA== # base64
+```
+
+- A key becomes `sops-redacted`, fit for a variable or a `targetPath` value. A key
+  ending in `.yaml` or `.yml` holds whole values, so it becomes an empty document:
+  only the values outside the Secret then reach the chart.
+- The keys are the real ones: a missing key still fails the render, a wrong value
+  does not.
+- Narrow `sops-values-pattern`, or set it to `''`, to keep flate's behavior.
 
 ## Charts using CRDs
 
@@ -363,7 +386,7 @@ as `registry:` or `docker-archive:`.
 
 | Action | What it does |
 |---|---|
-| [`flux-setup`](flux-setup/action.yml) | Checks out the pull request in `./pr` and its base in `./base`, replaces SOPS values with placeholders, installs flate. |
+| [`flux-setup`](flux-setup/action.yml) | Checks out the pull request in `./pr` and its base in `./base`, replaces SOPS values and Secrets with placeholders, installs flate. |
 | [`flux-diff`](flux-diff/action.yml) | Renders the HelmRelease and Kustomization diff and comments it. Needs `pull-requests: write`. |
 | [`helm-diff`](helm-diff/action.yml) | Former name of `flux-diff`, kept as an alias until v2. |
 | [`flux-images`](flux-images/action.yml) | Lists the images the pull request changes, each paired with the image it replaces. |
@@ -377,7 +400,7 @@ as `registry:` or `docker-archive:`.
 
 | Input | Default | Description |
 |---|---|---|
-| `sops-values-pattern` | `*values.enc.yaml` | `find -name` pattern of the SOPS-encrypted Helm values; empty to leave them encrypted |
+| `sops-values-pattern` | `*.y*ml` | `find -name` pattern of the SOPS-encrypted YAML files to give placeholders: Helm values, and the Secrets and ConfigMaps a `valuesFrom` or a `substituteFrom` reads, see [above](#sops-without-the-private-key); empty to leave them all encrypted |
 | `api-versions` | Prometheus Operator, Gateway API, cert-manager, VolumeSnapshot | CRD API versions offline helm reports as available, see [Charts using CRDs](#charts-using-crds) |
 
 **flux-diff** (and its former name, `helm-diff`)
@@ -441,7 +464,8 @@ as `registry:` or `docker-archive:`.
 - **The scanner never holds a writable token.** `cve-scan` pulls third-party images, so
   it runs in a read-only job; `cve-report` posts from a separate job that never touches
   an image.
-- **No secret in CI.** SOPS values are swapped for placeholders, never decrypted.
+- **No secret in CI.** SOPS values and Secrets are swapped for placeholders, never
+  decrypted.
 - **Pinned dependencies.** Every third-party action is pinned by commit SHA; pin this
   repository the same way.
 
@@ -454,6 +478,11 @@ as `registry:` or `docker-archive:`.
   even when the same pull request also changes a shared base it uses.
 - Images are read from `image` and `imageName` fields. A custom resource that splits
   an image into `repository` and `tag` fields is not scanned.
+- A placeholder is a string: a chart or a manifest that needs a number or a boolean
+  from an encrypted Secret key may not render. SOPS-encrypted `.env` and JSON files,
+  such as a `secretGenerator` reads, are not handled. Neither are manifests encrypted
+  whole, without an `encrypted_regex` such as `^(data|stringData|binaryData)$`, nor
+  YAML files yq cannot parse (warned): flate gets them as they are.
 - Pull request events only: the base is the first parent of the merge commit.
 - Private registries need credentials grype can read, such as a `docker login` in the
   scan job.
