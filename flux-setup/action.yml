@@ -41,11 +41,11 @@ runs:
         PATTERN: ${{ inputs.sops-values-pattern }}
       run: '"$GITHUB_ACTION_PATH/../lib/sops-placeholders.sh" "$PATTERN" pr base'
 
-    - uses: home-operations/flate/action@bbb6ebc344da051752dbdb1b413860ceffcfb63d # v0.7.3
+    - uses: home-operations/flate/action@4e07f351352d235a335e5a1f0a088eab7ec40997 # v0.8.0
       with:
         # github.action_ref is empty in a nested composite, so without this input the
         # action installs the latest binary whatever the SHA pin. Renovate bumps both.
-        version: 0.7.3
+        version: 0.8.0
 
     - name: Declare CRD APIs
       shell: bash
