@@ -3,9 +3,9 @@
 # Makes SOPS-encrypted YAML under <dir> renderable without the key, in place: every
 # file whose name matches <pattern> (find -name, empty for none) and that holds a sops
 # MAC. In each SOPS document of such a file, drops the sops metadata, keeps keys, maps
-# and lists, and swaps each encrypted leaf for a typed placeholder (rules in the README,
-# "SOPS without the private key"). flate drops encrypted keys, so a valuesFrom or
-# substituteFrom Secret would otherwise lose the keys a render needs. Plain documents,
+# and lists, and swaps each encrypted leaf for a typed placeholder (rules in docs/sops.md).
+# flate drops encrypted keys, so a valuesFrom or substituteFrom Secret would otherwise
+# lose the keys a render needs. Plain documents,
 # manifests encrypted without encrypted_regex (apiVersion is ENC) and files yq cannot
 # parse (warned) are left as they are.
 set -euo pipefail
