@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: kustomization-scope.sh <ks.json> <pr-dir> <base-dir>
+# Usage: kustomization-scope.sh <ks.json> <pr-dir> <base-dir> [<cluster-path>]
 # Tells whether the pull request diff shows the rendered change of each Kustomization in
 # `flate diff ks -o json`. Prints {"<namespace>/<name>": {why, source}}, why being:
 #   remote    it pulls a remote resource, component or base (URL, git remote)
@@ -12,9 +12,11 @@
 #             diff shows the change
 # The first that matches wins: a remote URL bump edits a file under the path too. A
 # source the tree does not declare is the working tree to flate, so it is not external.
+# With <cluster-path>, Flux declarations are read only where that cluster's render goes,
+# so that a source another cluster of the repository declares does not count.
 set -euo pipefail
 
-ks=$1 pr=$2 base=$3
+ks=$1 pr=$2 base=$3 cluster=${4:-}
 changed=$(git -C "$pr" diff --name-only HEAD^1 HEAD 2> /dev/null || true)
 
 # Prints the remote entries of the kustomization in <dir>, following local directories
@@ -34,11 +36,87 @@ remotes() { # <root> <dir> <depth>
   done
 }
 
-# Flux Kustomizations and the sources they may read, declared in the pull request tree,
-# read once: [{kind, namespace, name, source}], source being a Kustomization's sourceRef
-# No match is no declaration: grep exits 1, which pipefail would turn into a failure
-declarations=$({ grep -rlE --include='*.yaml' --include='*.yml' \
-  '^kind: (Kustomization|GitRepository|OCIRepository|Bucket|ExternalArtifact)\b' "$pr" 2> /dev/null || true; } |
+# Flux files under the given directories of the pull request tree. No match is no file:
+# grep exits 1, which pipefail would turn into a failure
+flux_files() { # <dir>...
+  { grep -rlE --include='*.yaml' --include='*.yml' \
+    '^kind: (Kustomization|GitRepository|OCIRepository|Bucket|ExternalArtifact)\b' "$@" 2> /dev/null || true; } | sort -u
+}
+
+# yq over many files at once, file by file when one does not parse: a whole batch would
+# otherwise be lost, and stop the script under errexit
+yq_all() { # <expression> <file>..., evaluated per document
+  local expr=$1 out file
+  shift
+  (( $# )) || return 0
+  if out=$(yq e -r --no-doc "$expr" "$@" 2> /dev/null); then
+    [[ -z $out ]] || printf '%s\n' "$out"
+  else
+    for file; do yq e -r --no-doc "$expr" "$file" 2> /dev/null || true; done
+  fi
+}
+
+# Absolute path of an existing file or directory, symlinks resolved; nothing otherwise
+resolve() { # <path>
+  if [[ -d $1 ]]; then
+    (cd "$1" && pwd -P)
+  elif [[ -f $1 ]]; then
+    (cd "${1%/*}" && printf '%s/%s\n' "$(pwd -P)" "${1##*/}")
+  fi
+}
+
+# Files and directories a cluster's render reads, from the pull request tree: the cluster
+# path, then the spec.path of every Flux Kustomization reading a GitRepository (the
+# repository root when it sets none; the path of another source is inside its artifact)
+# and the local files and directories every kustomization.yaml lists, until no new one
+cluster_paths() { # <cluster-path>
+  local paths queue files file
+  paths=$(resolve "$pr/$1")
+  [[ -n $paths ]] || return 0
+  queue=$paths
+  while [[ -n $queue ]]; do
+    printf '%s\n' "$paths" > "$work/known"
+    queue=$({
+      # One yq per batch of files, not per file: the tree may hold hundreds
+      files=()
+      while read -r file; do files+=("$file"); done < <(while read -r path; do flux_files "$path"; done <<< "$queue" | sort -u)
+      yq_all 'select(.kind == "Kustomization" and ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))
+          and (.spec.sourceRef.kind // "GitRepository") == "GitRepository")
+        | (.spec.path // "") | sub("^$"; ".")' ${files[@]+"${files[@]}"} |
+        while read -r entry; do printf '%s/%s\n' "$pr" "$entry"; done
+      files=()
+      while read -r file; do files+=("$file"); done < <(while read -r path; do
+        find "$path" \( -name kustomization.yaml -o -name kustomization.yml -o -name Kustomization \) 2> /dev/null
+      done <<< "$queue" | sort -u)
+      yq_all 'filename as $f | ((.resources // []) + (.components // []) + (.bases // []))[]
+        | select(tag == "!!str") | select(test("://|^git@") | not) | $f + "\t" + .' ${files[@]+"${files[@]}"} |
+        while IFS=$'\t' read -r file entry; do printf '%s/%s\n' "${file%/*}" "$entry"; done
+    } | sort -u | while read -r entry; do resolve "$entry"; done | sort -u |
+      # Only what is neither known nor inside a known directory
+      awk 'NR == FNR { known[++n] = $0; next }
+        { for (i = 1; i <= n; i++) if ($0 == known[i] || index($0, known[i] "/") == 1) next; print }' "$work/known" -)
+    if [[ -n $queue ]]; then paths=$(printf '%s\n%s' "$paths" "$queue"); fi
+  done
+  echo "$paths"
+}
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+read_paths=$pr
+if [[ -n $cluster ]]; then
+  read_paths=$(cluster_paths "$cluster")
+  if [[ -z $read_paths ]]; then
+    echo "::warning::kustomization-scope: cluster path $cluster not found, reading the whole tree" >&2
+    read_paths=$pr
+  fi
+fi
+paths=()
+while read -r path; do paths+=("$path"); done <<< "$read_paths"
+
+# Flux Kustomizations and the sources they may read, declared in the pull request tree
+# (only where the cluster's render goes, with <cluster-path>), read once:
+# [{kind, namespace, name, source}], source being a Kustomization's sourceRef
+declarations=$(flux_files "${paths[@]}" |
   while read -r file; do
     yq ea -o json -I0 'select(tag == "!!map" and ((.kind == "Kustomization"
         and ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/")))

@@ -16,8 +16,8 @@ resulting objects are diffed:
 
 Labels and annotations that change with every chart version (`helm.sh/chart`,
 `app.kubernetes.io/version`, `checksum/*`) are ignored as noise. In HelmReleases,
-`Secret` and `CustomResourceDefinition` objects are left out by default, see
-[Charts using CRDs](#charts-using-crds).
+`Secret` and `CustomResourceDefinition` objects are left out by default (the
+`helmrelease-skip-kinds` input), see [Charts using CRDs](#charts-using-crds).
 
 ## What the git diff hides in Kustomizations
 
@@ -71,7 +71,11 @@ In the sections listed:
   of a `FluxInstance` sync committed here, cannot be fetched offline: its Kustomizations
   fail to render and the comment says so.
 - A second `GitRepository` pointing at this repository with only a `branch` shows the pull
-  request's change. Pinned to a tag or a commit, it is fetched as such.
+  request's change, when its URL names the same repository as the `origin` remote that
+  `actions/checkout` sets (`https://` or `ssh://git@`, with or without `.git`). Pinned to a
+  tag or a commit, it is fetched as such.
+- A chart stored in the repository is built with its `file://` dependencies, so a change
+  to a subchart shows in the HelmRelease diff.
 - `GitRepository` `spec.include` is applied, and `valuesFrom` entries with a `targetPath`
   are merged with `spec.values` in helm-controller's order.
 
@@ -96,14 +100,15 @@ The input **replaces** that list, so repeat the defaults when you add an API:
 ```
 
 The CRDs a Kustomization applies are in its diff, summarized. Those a chart ships are
-left out of the HelmRelease diff. To review them too, an advanced setting overrides the
-kinds the renderer leaves out, at the job level: keep only `Secret` (the Kustomization
-diff follows the `kustomization-skip-kinds` input instead):
+left out of the HelmRelease diff by default. To review them too, summarized the same way,
+keep only `Secret` in `helmrelease-skip-kinds` (this replaces the former job-level
+`FLATE_SKIP_KINDS` setting, still honored while the input keeps its default):
 
 ```yaml
-  flux-diff:
-    env:
-      FLATE_SKIP_KINDS: Secret
+- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.4.0
+  with:
+    path: clusters/my-cluster
+    helmrelease-skip-kinds: Secret
 ```
 
 ## Limits
@@ -115,8 +120,6 @@ diff follows the `kustomization-skip-kinds` input instead):
   request changes: an edited manifest under a Kustomization's path counts as shown,
   even when the same pull request also changes a shared base it uses.
 - A Kustomization reading another `GitRepository` whose path also exists in this
-  repository is listed as `shared`, `edited` or counted, not as `source`. Sources are
-  looked up in the whole repository: in a repository with several clusters, a source one
-  cluster declares counts as declared for the others too.
+  repository is listed as `shared`, `edited` or counted, not as `source`.
 - Images are read from `image` and `imageName` fields. A custom resource that splits
   an image into `repository` and `tag` fields is not scanned.
