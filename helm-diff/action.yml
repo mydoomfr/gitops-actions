@@ -29,6 +29,11 @@ inputs:
       render without, with a warning, instead of failing: a substituteFrom or valuesFrom
       object created in the cluster, a source whose credentials CI lacks. Empty to fail.
     default: ""
+  comment-when-unchanged:
+    description: >-
+      Post a comment saying so when nothing renders differently, "false" to only refresh
+      an existing comment and stay silent otherwise (any other value posts it)
+    default: "true"
   max-chars:
     description: Size above which a section is replaced by a link to the run summary
     default: "60000"
@@ -85,14 +90,19 @@ runs:
         MAX_CHARS: ${{ inputs.max-chars }}
         MARKER: ${{ inputs.marker }}
         COMMENT_AUTHOR: ${{ inputs.author }}
+        COMMENT_WHEN_UNCHANGED: ${{ inputs.comment-when-unchanged }}
       run: |
         lib=$GITHUB_ACTION_PATH/../lib
         if [[ -f scope.json ]]; then export KS_SCOPE=$PWD/scope.json; fi
         "$lib/flux-diff-comment.sh" hr.json ks.json
         if [[ -f noop ]]; then
-          # Refresh an earlier diff comment, never open one for a no-op
-          echo "No rendered Flux change as of ${HEAD_SHA::7}." > comment.md
-          "$lib/pr-comment.sh" "$MARKER" comment.md --update-only || true
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+          # A no-op must not fail the check, as on a fork whose token cannot comment
+          if [[ $COMMENT_WHEN_UNCHANGED != false ]]; then
+            "$lib/pr-comment.sh" "$MARKER" comment.md || echo "::warning::could not post the Flux diff comment"
+          else
+            "$lib/pr-comment.sh" "$MARKER" comment.md --update-only || true
+          fi
           exit 0
         fi
         # Step summaries cap at 1 MiB: fall back to the comment-sized version

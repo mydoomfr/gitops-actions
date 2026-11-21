@@ -132,8 +132,9 @@ check "one row per producer" bash -c 'grep -q "^| \`flux-system/traefik\` | \`tr
 check "a unified diff per producer" grep -q '^+          image: docker.io/traefik@sha256:b' comment.md
 check "warns about suppressed renders" grep -q '| `apps/broken` | PR | 3 |' comment.md
 echo '{"changes": [], "suppressed": []}' > empty.json
-"$lib/flux-diff-comment.sh" empty.json
+HEAD_SHA=abcdef0123456 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" empty.json
 check "writes noop when nothing changed" test -f noop
+check "says the render ran and found no change" bash -c 'grep -q "^### Rendered Flux diff (abcdef0)$" comment.md && grep -q "^✅ The rendered HelmReleases and Kustomizations are unchanged\. See the \[run\](https://example.com/run)\.$" comment.md'
 
 echo "# flux-diff with Kustomizations"
 mkdir "$work/ks-diff" && cd "$work/ks-diff"
@@ -323,7 +324,10 @@ PARTIAL=true RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" hr.json
 check "warns about a Kustomization that failed to render" bash -c 'grep -q "^> Some HelmReleases or Kustomizations failed to render" comment.md && grep -q "^| \`flux-system/broken\` | PR | 2 | remote resource unreachable |$" comment.md'
 jq 'with_entries(.value.why = "direct")' scope.json > direct.json
 KS_SCOPE=direct.json "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
-check "opens no comment when the pull request diff shows everything" test -f noop
+check "writes noop when the pull request diff shows everything" test -f noop
+check "says what the pull request diff already shows" bash -c 'grep -q "^✅ No rendered change beyond what the pull request diff shows\.$" comment.md && grep -q "^_5 more Kustomizations changed exactly as the pull request diff shows\._$" comment.md'
+KS_SCOPE=scope.json KS_MODE=none "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
+check "never calls changes the input leaves out unchanged" bash -c 'grep -q "^✅ No rendered change to list\.$" comment.md && grep -q "left out by the \`kustomizations\` input" comment.md'
 
 echo "# SOPS placeholders"
 # Fixtures encrypted with a throwaway age key, discarded: no test can decrypt them
