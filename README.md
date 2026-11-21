@@ -18,8 +18,9 @@ GitHub Actions that comment on every pull request, Renovate ones included:
 - 🔐 **No secret needed**: SOPS-encrypted values and Secrets are rendered with
   placeholders, so CI never holds the private key.
 
-Each comment is updated on every push. When nothing is left to report, an existing
-comment says so, and no new one is created.
+Each comment is updated on every push. When there is nothing to report, a short comment
+says so, so you know the check ran; set `comment-when-unchanged: false` to stay silent
+instead (an existing comment is still refreshed).
 
 > [!IMPORTANT]
 > **Flux repositories only** for the Flux diff and the image discovery. Argo CD,

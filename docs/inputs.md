@@ -18,6 +18,7 @@ Every input of every action, with its default. Back to the [README](../README.md
 | `kustomizations` | `auto` | Kustomizations to list: `auto` (`remote,source,shared,edited`), `all`, `none`, or a list of those reasons and `direct` (changes the git diff shows), see [Flux diff](flux-diff.md#what-the-git-diff-hides-in-kustomizations) |
 | `kustomization-skip-kinds` | `Secret` | Comma-separated kinds left out of the Kustomization diff |
 | `allow-missing-kinds` | empty | Comma-separated kinds (`Secret`, `ConfigMap`, `CustomResourceDefinition`) the render may do without, with a warning, see [Objects that only exist in the cluster](sops.md#objects-that-only-exist-in-the-cluster) |
+| `comment-when-unchanged` | `true` | Post a short comment when nothing renders differently; `false` only refreshes an existing comment |
 | `max-chars` | `60000` | Size above which a section is replaced by a link to the run summary |
 | `token`, `author` | workflow token, `github-actions[bot]` | Identity that writes the comment |
 
@@ -49,7 +50,8 @@ Every input of every action, with its default. Back to the [README](../README.md
 | `scans-dir` | `$RUNNER_TEMP/cve-scans` | Directory holding the scans |
 | `marker` | `image-cves` | Tag of the comment |
 | `title`, `name-header`, `intro` | `Image CVEs`, `Image`, default line | Comment heading, first column header, line under the heading |
-| `noop-message` | `No image change as of {sha}.` | Refreshes an existing comment when there is nothing to report |
+| `noop-message` | `✅ No container image changed.` | Line under the heading when no image changed. The heading already shows the head commit; `{sha}` in the message is replaced by it too |
+| `comment-when-unchanged` | `true` | Post the `noop-message` comment when no image changed; `false` only refreshes an existing comment |
 | `platform` | `linux/amd64` | Platform named in the default intro |
 | `severities` | `Critical,High` | Severities listed in detail and counted as fixable |
 | `max-rows` | `30` | Rows per CVE table in the comment; the run summary keeps them all |

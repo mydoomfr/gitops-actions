@@ -5,8 +5,8 @@
 # section. CustomResourceDefinitions are summarized (served versions, fields added or
 # removed) rather than diffed, and Secret values are never shown. comment-full.md keeps
 # every section plus the raw CRD diffs; comment.md replaces the sections overflowing
-# MAX_CHARS with a link. Writes an empty noop file instead when nothing changed and flate
-# rendered all.
+# MAX_CHARS with a link. When nothing changed and flate rendered all, writes a noop file
+# and a short comment.md saying so, with the Kustomizations only counted.
 # KS_SCOPE: output of kustomization-scope.sh. KS_MODE picks the Kustomizations listed:
 # auto (remote,source,shared,edited), all, none, or a comma-separated list of those
 # reasons and direct. The others are only counted.
@@ -69,8 +69,29 @@ jq --slurpfile scope <(if [[ -n $KS_SCOPE ]]; then cat "$KS_SCOPE"; else echo '{
   | .skipped = ($left | map(select(.why != "direct")) | length)
   | .changes |= map(select(listed) | .why = ($scope[0][.parent | key] // {why: "", source: ""}))' "$work/raw.json" > "$work/diff.json"
 
+# Counts the Kustomizations left out: <count> <what>
+left() {
+  if (( $1 > 0 )); then
+    printf '_%s more Kustomization%s %s._\n' "$1" "$([[ $1 == 1 ]] || echo s)" "$2" | tee -a comment-full.md >> comment.md
+  fi
+}
+shown=$(jq .shown "$work/diff.json") skipped=$(jq .skipped "$work/diff.json")
+
+# Nothing to review: say so, so that a quiet pull request does not look like a skipped run
 if [[ $(jq '.changes + .suppressed | length' "$work/diff.json") == 0 && -z $PARTIAL ]]; then
   echo noop > noop
+  if (( shown + skipped == 0 )); then
+    status="✅ The rendered HelmReleases and Kustomizations are unchanged."
+  elif (( skipped == 0 )); then
+    status="✅ No rendered change beyond what the pull request diff shows."
+  else
+    # Kustomizations the input leaves out did change: only the listed ones did not
+    status="✅ No rendered change to list."
+  fi
+  printf '### Rendered Flux diff (%s)\n\n%s%s\n\n' "${HEAD_SHA::7}" "$status" \
+    "${RUN_URL:+ See the [run]($RUN_URL).}" | tee comment-full.md > comment.md
+  left "$shown" "changed exactly as the pull request diff shows"
+  left "$skipped" "changed, left out by the \`kustomizations\` input"
   exit 0
 fi
 
@@ -244,11 +265,5 @@ for ((g = 0; g < ngroups; g++)); do
   fi
 done
 
-# Counts the Kustomizations left out: <count> <what>
-left() {
-  if (( $1 > 0 )); then
-    printf '_%s more Kustomization%s %s._\n' "$1" "$([[ $1 == 1 ]] || echo s)" "$2" | tee -a comment-full.md >> comment.md
-  fi
-}
-left "$(jq .shown "$work/diff.json")" "changed exactly as the pull request diff shows"
-left "$(jq .skipped "$work/diff.json")" "changed, left out by the \`kustomizations\` input"
+left "$shown" "changed exactly as the pull request diff shows"
+left "$skipped" "changed, left out by the \`kustomizations\` input"
