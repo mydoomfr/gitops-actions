@@ -86,8 +86,8 @@ jq -r '[if type == "array" then .[] else . end | .changes // [] | .[] | .parent
   | select(.kind == "Kustomization")] | unique_by([.namespace, .name])[]
   | [(.namespace // ""), .name, (.path // "" | ltrimstr("./") | rtrimstr("/") | if . == "." then "" else . end)] | @tsv' "$ks" |
   while IFS=$'\t' read -r ns name path; do
+    IFS=$'\t' read -r sdeclared skind sname < <(source_of "$ns" "$name") || sdeclared='' skind='' sname=''
     # Whole output first: `head` closing the pipe early would kill the script under pipefail
-    IFS=$'\t' read -r sdeclared skind sname < <(source_of "$ns" "$name") || sdeclared= skind= sname=
     remote=$({ remotes "$pr" "$path" 0; remotes "$base" "$path" 0; } | sed -n 1p)
     # flate renders an ExternalArtifact (an ArtifactGenerator output) or a declared OCI or
     # Bucket source, whatever the local files say; an undeclared one is the working tree
