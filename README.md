@@ -186,6 +186,10 @@ diff only lists the Kustomizations whose change it does not show, and says why:
 | `shared` | a `../common` base, a component or a `postBuild.substituteFrom` variable used by several Kustomizations | the shared file only |
 | `edited` | a `kustomization.yaml` that adds a component or a patch, renames or relabels | the reference, not its effect |
 
+A Kustomization reads `source` when its `sourceRef` is an `ExternalArtifact` (the output
+of an `ArtifactGenerator`), an `OCIRepository` or `Bucket` declared in the repository, or
+when its path is missing from the repository, such as one in another `GitRepository`.
+
 Every other changed Kustomization (an edited manifest, an `images:` tag bump in a
 `kustomization.yaml`) is only counted, and on its own never opens a comment: a Renovate
 image or chart bump stays as quiet as before.
@@ -210,6 +214,21 @@ In the sections listed:
 - **No duplicates:** the values ConfigMaps and Secrets of a changed HelmRelease are left
   out, their effect is in its rendered diff. The HelmRelease object itself stays, for
   changes no render shows, such as `interval` or `driftDetection`.
+
+How flate reads the Flux sources of the repository:
+
+- A source that a Kustomization reads and that nothing in the repository declares or
+  produces, whatever its kind, is read from the pull request and base trees: committing
+  the `flux-system` `GitRepository` is not required, nor a Flux Operator `FluxInstance`
+  that lives only in the cluster. The chart source of a HelmRelease must still be
+  declared.
+- A source produced by an object the repository declares, such as the `OCIRepository`
+  of a `FluxInstance` sync committed here, cannot be fetched offline: its Kustomizations
+  fail to render and the comment says so.
+- A second `GitRepository` pointing at this repository with only a `branch` shows the pull
+  request's change. Pinned to a tag or a commit, it is fetched as such.
+- `GitRepository` `spec.include` is applied, and `valuesFrom` entries with a `targetPath`
+  are merged with `spec.values` in helm-controller's order.
 
 ## SOPS without the private key
 
@@ -237,7 +256,8 @@ matching the `sops-values-pattern` input (`*.y*ml`) that hold SOPS metadata.
 
 flate drops the encrypted keys of a Secret, so a HelmRelease whose `valuesFrom` needs
 one fails to render, and a Kustomization `postBuild.substituteFrom` variable is left
-empty. `flux-setup` gives placeholders to the `data`, `stringData` and `binaryData`
+as `${VAR}`, or replaced by its `${VAR:=default}` or an empty string when substitution
+runs anyway: other variables flate can read, inline ones, or the `Always` strategy. `flux-setup` gives placeholders to the `data`, `stringData` and `binaryData`
 of SOPS-encrypted Secrets and ConfigMaps too, without any dummy file to maintain:
 
 ```yaml
@@ -495,7 +515,11 @@ as `registry:` or `docker-archive:`.
   cluster capabilities are flate's Kubernetes version plus the `api-versions` input.
 - Whether the git diff shows a Kustomization change is inferred from the files the pull
   request changes: an edited manifest under a Kustomization's path counts as shown,
-  even when the same pull request also changes a shared base it uses.
+  even when the same pull request also changes a shared base it uses. A Kustomization
+  reading another `GitRepository` whose path also exists in this repository is listed
+  as `shared`, `edited` or counted, not as `source`. Sources are looked up in the whole
+  repository: in a repository with several clusters, a source one cluster declares counts
+  as declared for the others too.
 - Images are read from `image` and `imageName` fields. A custom resource that splits
   an image into `repository` and `tag` fields is not scanned.
 - A placeholder is a string: a chart or a manifest that needs a number or a boolean

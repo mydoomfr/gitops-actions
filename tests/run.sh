@@ -174,6 +174,72 @@ mkdir -p pr/apps/my.app pr/apps/myXapp && echo "a: 1" > pr/apps/my.app/cm.yaml &
 kustomization apps/img deployment.yaml
 printf 'images:\n  - name: app\n    newTag: "1"\n' >> pr/apps/img/kustomization.yaml
 printf 'apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: crds\n  namespace: flux-system\nspec:\n  path: ./config/crd\n  sourceRef:\n    kind: GitRepository\n    name: gateway-api\n' > pr/clusters/test/crds.yaml
+# Kustomizations reading an OCIRepository: declared in the tree, it is fetched whatever the
+# local files; undeclared, flate reads the working tree
+cat > pr/clusters/test/oci.yaml << 'EOF2'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: app-artifact
+  namespace: flux-system
+spec:
+  url: oci://ghcr.io/example/app-manifests
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: oci-app
+  namespace: flux-system
+spec:
+  path: ./apps/whoami
+  sourceRef:
+    kind: OCIRepository
+    name: app-artifact
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: oci-root
+  namespace: flux-system
+spec:
+  path: ./
+  sourceRef:
+    kind: OCIRepository
+    name: app-artifact
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: oci-undeclared
+  namespace: flux-system
+spec:
+  path: ./apps/whoami
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: oci-nons
+spec:
+  path: ./apps/whoami
+  sourceRef:
+    kind: OCIRepository
+    name: app-artifact
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: generated
+  namespace: flux-system
+spec:
+  path: ./
+  sourceRef:
+    kind: ExternalArtifact
+    name: app-bundle
+EOF2
 commit base
 echo "image: whoami:2" > pr/apps/whoami/deployment.yaml
 echo "data: 2" > pr/apps/shared/configmap.yaml
@@ -186,7 +252,9 @@ git -C pr worktree add -q ../base HEAD^1
 jq -n '{changes: [
   ["whoami", "apps/whoami"], ["overlay", "./apps/overlay"], ["gw", "infra/gw"],
   ["remote-base", "infra/remote-base"], ["crds", "config/crd"], ["comp", "apps/comp"], ["img", "apps/img"],
-  ["ssh", "infra/ssh"], ["dotted", "apps/my.app"], ["lookalike", "apps/myXapp"], ["root", "."]
+  ["ssh", "infra/ssh"], ["dotted", "apps/my.app"], ["lookalike", "apps/myXapp"], ["root", "."],
+  ["oci-app", "apps/whoami"], ["oci-root", "."], ["oci-undeclared", "apps/whoami"],
+  ["oci-nons", "apps/whoami"], ["generated", "."]
   ] | map({kind: "ConfigMap", name: "x", parent: {kind: "Kustomization", namespace: "flux-system", name: .[0], path: .[1]}})}' > ks.json
 "$lib/kustomization-scope.sh" ks.json "$PWD/pr" "$PWD/base" > scope.json
 scope() { jq -e --arg k "flux-system/$1" --arg why "$2" '.[$k].why == $why' scope.json; }
@@ -200,6 +268,13 @@ check "a git@ base in a Kustomization file is remote" scope ssh remote
 check "a dot in a path only matches itself" bash -c 'jq -e ".[\"flux-system/dotted\"].why == \"indirect\" and .[\"flux-system/lookalike\"].why == \"direct\"" scope.json'
 check "a root path sees every kustomization file the pull request edits" scope root edited
 check "a path in another Flux source is external" bash -c 'jq -e ".[\"flux-system/crds\"] == {why: \"external\", source: \"gateway-api\"}" scope.json'
+check "a declared OCIRepository is external even where its path exists locally" \
+  bash -c 'jq -e ".[\"flux-system/oci-app\"] == {why: \"external\", source: \"app-artifact\"} and .[\"flux-system/oci-root\"].why == \"external\"" scope.json'
+check "an undeclared source is the working tree" scope oci-undeclared direct
+check "a Kustomization without a namespace in its file is matched" scope oci-nons external
+check "an ExternalArtifact is external without a declaration" scope generated external
+mkdir -p empty/pr && echo '{}' > empty.json
+check "a tree without Flux objects gives an empty scope" bash -c '[[ $("$0" empty.json "$PWD/empty/pr" "$PWD/empty/pr") == "{}" ]]' "$lib/kustomization-scope.sh"
 
 echo "# flux-diff with the Kustomization scope"
 mkdir "$work/ks-scope" && cd "$work/ks-scope"
