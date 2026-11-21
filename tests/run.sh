@@ -224,6 +224,21 @@ jq '.changes |= map(if .name == "xtelemetrypolicies.gateway.networking.x-k8s.io"
 "$lib/flux-diff-comment.sh" hr.json removed.json
 check "summarizes a removed CRD" grep -q '^| `xtelemetrypolicies.gateway.networking.x-k8s.io` | removed | — |$' comment.md
 check "never shows the values of an added Secret" bash -c '! grep -E "bmV3LXNlY3JldA|YWRtaW4|YWRkZWQta2V5|new-plain-token" comment-full.md && grep -q "^+  password: <redacted>$" comment.md'
+# flate >= 0.8 pairs a generator-renamed object into one change named after the new
+# object, the old name only in .old.metadata.name
+jq '(.changes | map(select(.name == "traefik-values-aaaa")) | first) as $old
+  | .changes |= (map(select(.name != "traefik-values-aaaa")
+      | if .name == "traefik-values-bbbb" then .status = "changed" | .old = $old.old else . end)
+    + [{kind: "Secret", namespace: "app", name: "app-env-bbbb", status: "changed",
+        parent: {kind: "Kustomization", namespace: "flux-system", name: "env", path: "apps/env"},
+        old: {apiVersion: "v1", kind: "Secret", metadata: {name: "app-env-aaaa", namespace: "app"},
+          data: {TOKEN: "b2xkLXRva2Vu", USER: "dXNlcg=="}},
+        new: {apiVersion: "v1", kind: "Secret", metadata: {name: "app-env-bbbb", namespace: "app"},
+          data: {TOKEN: "bmV3LXRva2Vu", USER: "dXNlcg=="}}}])' "$fixtures/flate-diff-ks.json" > paired.json
+"$lib/flux-diff-comment.sh" hr.json paired.json
+check "leaves out a paired values ConfigMap of a changed HelmRelease" bash -c '! grep -q "ConfigMap flux-system/traefik-values" comment-full.md && grep -q "^| \`flux-system/traefik\` | — | \`infra/traefik\` |  | 1 |  |$" comment.md'
+check "counts a paired generated Secret as one change" grep -q '^| `flux-system/env` | — | `apps/env` |  | 1 |  |$' comment.md
+check "flags the keys of a paired generated Secret that changed" bash -c 'grep -q "^+  TOKEN: <redacted, changed>$" comment.md && grep -q "^ *USER: <redacted>$" comment.md && grep -q "^+  name: app-env-bbbb$" comment.md && ! grep -E "b2xkLXRva2Vu|bmV3LXRva2Vu|dXNlcg" comment-full.md'
 jq '[., {changes: [.changes[] | select(.kind == "Deployment") | .parent.name = "whoami-prod"]}]' "$fixtures/flate-diff-ks.json" > multi.json
 "$lib/flux-diff-comment.sh" hr.json multi.json
 check "merges multi-cluster Kustomization outputs" bash -c 'grep -q "^| \`flux-system/whoami\` |" comment.md && grep -q "^| \`flux-system/whoami-prod\` |" comment.md'

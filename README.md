@@ -255,6 +255,24 @@ data:
   does not.
 - Narrow `sops-values-pattern`, or set it to `''`, to keep flate's behavior.
 
+### Objects that only exist in the cluster
+
+A `valuesFrom` or `substituteFrom` object that is not in the repository at all, such as
+a Secret created by External Secrets or by hand, fails its render. List its kind in the
+`allow-missing-kinds` input of `flux-diff` and `flux-images` to render without it:
+
+```yaml
+- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.2.0
+  with:
+    path: clusters/production
+    allow-missing-kinds: Secret,ConfigMap
+```
+
+flate then warns once per missing reference: a `valuesFrom` is left out of the values, a
+`substituteFrom` variable is left unsubstituted or empty. The setting is broad: with
+`Secret`, a Flux source whose credentials CI lacks is skipped too, so a real error can
+hide behind a warning. Leave it empty, the default, unless such objects exist.
+
 ## Charts using CRDs
 
 Many charts render an object only when the cluster serves its API, such as
@@ -411,6 +429,7 @@ as `registry:` or `docker-archive:`.
 | `marker` | `helm-diff` | Tag of the comment, kept from the former name so that existing comments keep updating |
 | `kustomizations` | `auto` | Kustomizations to list: `auto` (`remote,source,shared,edited`), `all`, `none`, or a list of those reasons and `direct` |
 | `kustomization-skip-kinds` | `Secret` | Comma-separated kinds left out of the Kustomization diff |
+| `allow-missing-kinds` | empty | Comma-separated kinds (`Secret`, `ConfigMap`, `CustomResourceDefinition`) flate renders without, with a warning, see [Objects that only exist in the cluster](#objects-that-only-exist-in-the-cluster) |
 | `max-chars` | `60000` | Size above which a section is replaced by a link to the run summary |
 | `token`, `author` | workflow token, `github-actions[bot]` | Identity that writes the comment |
 
@@ -420,6 +439,7 @@ as `registry:` or `docker-archive:`.
 |---|---|---|
 | `path` | required | Cluster directory holding the Flux bootstrap objects |
 | `max-images` | `20` | Images listed at most, the others are counted in the notes |
+| `allow-missing-kinds` | empty | Comma-separated kinds (`Secret`, `ConfigMap`, `CustomResourceDefinition`) flate renders without, with a warning, see [Objects that only exist in the cluster](#objects-that-only-exist-in-the-cluster) |
 
 **cve-scan** (output: `dir`)
 

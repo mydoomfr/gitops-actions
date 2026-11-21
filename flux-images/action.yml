@@ -11,6 +11,11 @@ inputs:
   max-images:
     description: Maximum number of changed images to list, the others are counted in the notes
     default: "20"
+  allow-missing-kinds:
+    description: >-
+      Comma-separated input kinds (Secret, ConfigMap, CustomResourceDefinition) flate may
+      render without, with a warning, instead of failing, as in flux-diff. Empty to fail.
+    default: ""
 
 outputs:
   targets:
@@ -28,10 +33,13 @@ runs:
       shell: bash
       env:
         CLUSTER_PATH: ${{ inputs.path }}
+        ALLOW_MISSING_KINDS: ${{ inputs.allow-missing-kinds }}
       run: |
         mkdir -p "$RUNNER_TEMP/flux-images"
         unset FLATE_BASE # exported by the flate action, mutually exclusive with --path-orig
-        flate diff all --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$RUNNER_TEMP/flux-images/all.json" ||
+        args=()
+        if [[ -n $ALLOW_MISSING_KINDS ]]; then args+=(--allow-missing-kinds "$ALLOW_MISSING_KINDS"); fi
+        flate diff all "${args[@]}" --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$RUNNER_TEMP/flux-images/all.json" ||
           echo "partial=true" >> "$GITHUB_OUTPUT"
 
     - name: List changed images
