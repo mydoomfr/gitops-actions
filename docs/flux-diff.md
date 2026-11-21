@@ -43,7 +43,7 @@ before.
 Pick the reasons with the `kustomizations` input:
 
 ```yaml
-- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.2.0
+- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.4.0
   with:
     path: clusters/my-cluster
     kustomizations: remote,source # auto (default: remote,source,shared,edited), all, none, or a list with direct
@@ -87,7 +87,7 @@ The default covers Prometheus Operator, Gateway API, cert-manager and VolumeSnap
 The input **replaces** that list, so repeat the defaults when you add an API:
 
 ```yaml
-- uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.2.0
+- uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.4.0
   with:
     api-versions: >-
       monitoring.coreos.com/v1 monitoring.coreos.com/v1alpha1

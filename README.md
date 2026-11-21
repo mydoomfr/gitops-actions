@@ -158,7 +158,7 @@ Copy [`examples/flux-pr.yaml`](examples/flux-pr.yaml) to `.github/workflows/`, t
   holding `flux-system/`, such as `clusters/my-cluster`);
 - adapt its `on.pull_request.paths` to your repository layout;
 - replace `<sha>` with the commit of a [release](https://github.com/mydoomfr/gitops-actions/releases)
-  (a tag such as `@v1.3.0` works too; Renovate can pin it to its SHA).
+  (a tag such as `@v1.4.0` works too; Renovate can pin it to its SHA).
 
 Drop a job to turn its feature off:
 
@@ -170,8 +170,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.2.0
-      - uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.2.0
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.4.0
+      - uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.4.0
         with:
           path: clusters/my-cluster
 
@@ -180,12 +180,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.2.0
-      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.2.0
+      - uses: mydoomfr/gitops-actions/flux-setup@<sha> # v1.4.0
+      - uses: mydoomfr/gitops-actions/flux-images@<sha> # v1.4.0
         id: images
         with:
           path: clusters/my-cluster
-      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.2.0
+      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.4.0
         with:
           targets: ${{ steps.images.outputs.targets }}
           notes: ${{ steps.images.outputs.notes }}
@@ -196,7 +196,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.2.0
+      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.4.0
 ```
 
 ## Quick start: any repository building images
@@ -217,7 +217,7 @@ per image, one `cve-report` job merging them into a single comment:
         with:
           name: my-app-image
           path: ${{ runner.temp }}
-      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.2.0
+      - uses: mydoomfr/gitops-actions/cve-scan@<sha> # v1.4.0
         with:
           name: my-app
           new-source: docker-archive:${{ runner.temp }}/image.tar
@@ -232,7 +232,7 @@ per image, one `cve-report` job merging them into a single comment:
     permissions:
       pull-requests: write
     steps:
-      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.2.0
+      - uses: mydoomfr/gitops-actions/cve-report@<sha> # v1.4.0
         with:
           artifact-pattern: "*-cves"
           name-header: App

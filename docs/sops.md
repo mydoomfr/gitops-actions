@@ -56,7 +56,7 @@ a Secret created by External Secrets or by hand, fails its render. List its kind
 `allow-missing-kinds` input of `flux-diff` and `flux-images` to render without it:
 
 ```yaml
-- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.2.0
+- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.4.0
   with:
     path: clusters/production
     allow-missing-kinds: Secret,ConfigMap
