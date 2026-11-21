@@ -17,6 +17,7 @@ Every input of every action, with its default. Back to the [README](../README.md
 | `marker` | `helm-diff` | Tag of the comment, kept from the former name so that existing comments keep updating |
 | `kustomizations` | `auto` | Kustomizations to list: `auto` (`remote,source,shared,edited`), `all`, `none`, or a list of those reasons and `direct` (changes the git diff shows), see [Flux diff](flux-diff.md#what-the-git-diff-hides-in-kustomizations) |
 | `kustomization-skip-kinds` | `Secret` | Comma-separated kinds left out of the Kustomization diff |
+| `helmrelease-skip-kinds` | `Secret,CustomResourceDefinition` | Comma-separated kinds left out of the HelmRelease diff; keep only `Secret` to review the CRDs a chart ships, see [Charts using CRDs](flux-diff.md#charts-using-crds) |
 | `allow-missing-kinds` | empty | Comma-separated kinds (`Secret`, `ConfigMap`, `CustomResourceDefinition`) the render may do without, with a warning, see [Objects that only exist in the cluster](sops.md#objects-that-only-exist-in-the-cluster) |
 | `comment-when-unchanged` | `true` | Post a short comment when nothing renders differently; `false` only refreshes an existing comment |
 | `max-chars` | `60000` | Size above which a section is replaced by a link to the run summary |

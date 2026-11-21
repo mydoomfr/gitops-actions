@@ -23,6 +23,11 @@ inputs:
       Comma-separated kinds left out of the Kustomization diff. CRDs are summarized,
       Secret values are always masked.
     default: Secret
+  helmrelease-skip-kinds:
+    description: >-
+      Comma-separated kinds left out of the HelmRelease diff. Drop CustomResourceDefinition
+      to review the CRDs a chart ships, summarized; Secret values are always masked.
+    default: Secret,CustomResourceDefinition
   allow-missing-kinds:
     description: >-
       Comma-separated input kinds (Secret, ConfigMap, CustomResourceDefinition) flate may
@@ -54,6 +59,7 @@ runs:
         CLUSTER_PATH: ${{ inputs.path }}
         KUSTOMIZATIONS: ${{ inputs.kustomizations }}
         SKIP_KINDS: ${{ inputs.kustomization-skip-kinds }}
+        HR_SKIP_KINDS: ${{ inputs.helmrelease-skip-kinds }}
         ALLOW_MISSING_KINDS: ${{ inputs.allow-missing-kinds }}
       run: |
         dir=$RUNNER_TEMP/flux-diff
@@ -63,7 +69,12 @@ runs:
         args=()
         if [[ -n $ALLOW_MISSING_KINDS ]]; then args+=(--allow-missing-kinds "$ALLOW_MISSING_KINDS"); fi
         # Render failures still print the other changes, with the failed producers under .suppressed
-        flate diff hr "${args[@]}" --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$dir/hr.json" ||
+        hr_args=(${args[@]+"${args[@]}"})
+        # Before this input, the docs set FLATE_SKIP_KINDS on the job: a flag would override it
+        if [[ -z ${FLATE_SKIP_KINDS:-} || $HR_SKIP_KINDS != Secret,CustomResourceDefinition ]]; then
+          hr_args+=(--skip-kinds "$HR_SKIP_KINDS")
+        fi
+        flate diff hr ${hr_args[@]+"${hr_args[@]}"} --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$dir/hr.json" ||
           echo "partial=true" >> "$GITHUB_OUTPUT"
         # A separate run, not `diff all`: a Kustomization failure stays a warning, --skip-kinds spares HelmReleases
         if [[ $KUSTOMIZATIONS != none ]]; then
@@ -73,7 +84,7 @@ runs:
             echo "::warning::flate could not render every Kustomization, see the comment and the logs above"
             echo "ks-partial=true" >> "$GITHUB_OUTPUT"
           fi
-          "$GITHUB_ACTION_PATH/../lib/kustomization-scope.sh" "$dir/ks.json" "$PWD/pr" "$PWD/base" > "$dir/scope.json"
+          "$GITHUB_ACTION_PATH/../lib/kustomization-scope.sh" "$dir/ks.json" "$PWD/pr" "$PWD/base" "$CLUSTER_PATH" > "$dir/scope.json"
         fi
 
     - name: Comment on the pull request

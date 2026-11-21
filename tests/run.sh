@@ -109,6 +109,14 @@ check "lists several chosen severities" bash -c 'grep -q "3 High/Medium," commen
 check "rejects an unknown severity" bash -c '! SEVERITIES=urgent "$1" render scan-docker.io_traefik-0.json' _ "$lib/cve.sh"
 NOTES='> warning' "$lib/cve.sh" render
 check "renders notes without any scan" bash -c 'grep -q "> warning" comment.md && ! grep -q "^| Image" comment.md'
+HEAD_SHA=abcdef0123456 RUN_URL=https://example.com/run "$lib/cve.sh" noop
+check "says no image changed, with a link to the run" bash -c '[[ $(cat comment.md) == "### Image CVEs (abcdef0)"$'"'"'\n\n'"'"'"✅ No container image changed. See the [run](https://example.com/run)." ]]'
+HEAD_SHA=abcdef0123456 TITLE=App NOOP_MESSAGE='Nothing as of {sha}.' "$lib/cve.sh" noop
+check "takes a custom message and title" bash -c 'grep -q "^### App (abcdef0)$" comment.md && grep -q "^Nothing as of abcdef0\.$" comment.md'
+SEVERITIES=urgent "$lib/cve.sh" noop
+check "a no-op does not fail on invalid severities" grep -q '^✅ No container image changed\.$' comment.md
+NOOP_MESSAGE='' RUN_URL=https://example.com/run "$lib/cve.sh" noop
+check "starts an empty message with the run link" grep -q '^See the \[run\](https://example.com/run)\.$' comment.md
 
 echo "# pr-comment"
 cd "$work"
@@ -240,7 +248,35 @@ spec:
   sourceRef:
     kind: ExternalArtifact
     name: app-bundle
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: fleet-app
+  namespace: flux-system
+spec:
+  path: ./apps/whoami
+  sourceRef:
+    kind: OCIRepository
+    name: fleet
 EOF2
+# Another cluster of the repository declares the OCIRepository fleet-app reads
+mkdir -p pr/clusters/prod
+printf 'apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata:\n  name: fleet\n  namespace: flux-system\nspec:\n  url: oci://ghcr.io/example/fleet\n' \
+  > pr/clusters/prod/fleet.yaml
+# A cluster that reads its source through a file a kustomization.yaml lists, and one whose
+# Kustomization without spec.path reads the whole repository
+mkdir -p pr/infra/sources pr/clusters/files pr/clusters/nopath
+printf 'apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata:\n  name: fleet-file\n  namespace: flux-system\nspec:\n  url: oci://ghcr.io/example/file\n' \
+  > pr/infra/sources/oci.yaml
+oci_ks() { # <name>
+  printf 'apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: %s\n  namespace: flux-system\nspec:\n  path: ./apps/whoami\n  sourceRef:\n    kind: OCIRepository\n    name: fleet-file\n' "$1"
+}
+oci_ks file-app > pr/clusters/files/apps.yaml
+printf 'resources:\n  - ../../infra/sources/oci.yaml\n  - apps.yaml\n' > pr/clusters/files/kustomization.yaml
+oci_ks root-app > pr/clusters/nopath/apps.yaml
+printf 'apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: whole\n  namespace: flux-system\nspec:\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n' \
+  > pr/clusters/nopath/whole.yaml
 commit base
 echo "image: whoami:2" > pr/apps/whoami/deployment.yaml
 echo "data: 2" > pr/apps/shared/configmap.yaml
@@ -255,7 +291,8 @@ jq -n '{changes: [
   ["remote-base", "infra/remote-base"], ["crds", "config/crd"], ["comp", "apps/comp"], ["img", "apps/img"],
   ["ssh", "infra/ssh"], ["dotted", "apps/my.app"], ["lookalike", "apps/myXapp"], ["root", "."],
   ["oci-app", "apps/whoami"], ["oci-root", "."], ["oci-undeclared", "apps/whoami"],
-  ["oci-nons", "apps/whoami"], ["generated", "."]
+  ["oci-nons", "apps/whoami"], ["generated", "."], ["fleet-app", "apps/whoami"],
+  ["file-app", "apps/whoami"], ["root-app", "apps/whoami"]
   ] | map({kind: "ConfigMap", name: "x", parent: {kind: "Kustomization", namespace: "flux-system", name: .[0], path: .[1]}})}' > ks.json
 "$lib/kustomization-scope.sh" ks.json "$PWD/pr" "$PWD/base" > scope.json
 scope() { jq -e --arg k "flux-system/$1" --arg why "$2" '.[$k].why == $why' scope.json; }
@@ -275,6 +312,17 @@ check "an undeclared source is the working tree" scope oci-undeclared direct
 check "a Kustomization without a namespace in its file is matched" scope oci-nons external
 check "an ExternalArtifact is external without a declaration" scope generated external
 mkdir -p empty/pr && echo '{}' > empty.json
+check "without a cluster path, a source any cluster declares counts" scope fleet-app external
+"$lib/kustomization-scope.sh" ks.json "$PWD/pr" "$PWD/base" clusters/test > scope-test.json
+check "with a cluster path, only that cluster's declarations count" \
+  jq -e '.["flux-system/fleet-app"].why == "direct" and .["flux-system/oci-app"].why == "external" and .["flux-system/crds"].why == "external"' scope-test.json
+"$lib/kustomization-scope.sh" ks.json "$PWD/pr" "$PWD/base" clusters/files > scope-files.json
+check "follows a file a kustomization.yaml lists" jq -e '.["flux-system/file-app"].why == "external"' scope-files.json
+"$lib/kustomization-scope.sh" ks.json "$PWD/pr" "$PWD/base" clusters/nopath > scope-nopath.json
+check "follows a Kustomization without spec.path to the repository root" jq -e '.["flux-system/root-app"].why == "external"' scope-nopath.json
+"$lib/kustomization-scope.sh" ks.json "$PWD/pr" "$PWD/base" clusters/nope > scope-nope.json 2> nope.err
+check "reads the whole tree, with a warning, for a missing cluster path" \
+  bash -c 'grep -q "::warning::.*clusters/nope" nope.err && diff -q scope.json scope-nope.json'
 check "a tree without Flux objects gives an empty scope" bash -c '[[ $("$0" empty.json "$PWD/empty/pr" "$PWD/empty/pr") == "{}" ]]' "$lib/kustomization-scope.sh"
 
 echo "# flux-diff with the Kustomization scope"

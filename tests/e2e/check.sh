@@ -46,6 +46,9 @@ check "diff all suppresses nothing" jq -e '.suppressed // [] | length == 0' all.
 check "diff all renders the HelmReleases diff hr renders" \
   diff -u <(jq -r '[.changes[] | select(.parent.kind == "HelmRelease") | "\(.parent.name) \(.kind) \(.name)"] | unique[]' diff.json) \
   <(jq -r '[.changes[] | select(.parent.kind == "HelmRelease") | "\(.parent.name) \(.kind) \(.name)"] | unique[]' all.json)
+check "renders the file:// subchart of a chart in the repository" \
+  jq -e 'any(.changes[]; .parent.name == "umbrella" and .kind == "ConfigMap" and .name == "sub"
+    and .old.data.greeting == "hello" and .new.data.greeting == "bonjour")' diff.json
 check "renders a valuesFrom read from a SOPS Secret" \
   jq -e 'any(.changes[]; .parent.name == "podinfo" and .kind == "Deployment"
     and any(.new.spec.template.spec.containers[].env[]?; .name == "PODINFO_UI_MESSAGE" and .value == "sops-redacted"))' diff.json
@@ -56,14 +59,35 @@ check "renders Kustomizations without error" test "$rc" = 0
 check "substitutes a variable read from a SOPS Secret" \
   jq -e 'any(.changes[]; .parent.name == "whoami" and .kind == "Deployment"
     and .new.spec.template.metadata.labels.env == "sops-redacted")' ks.json
-"$lib/kustomization-scope.sh" ks.json "$root/pr" "$root/base" > scope.json
+check "previews a second GitRepository on this repository with the pull request's files" \
+  jq -e 'any(.changes[]; .parent.name == "selfsrc" and .kind == "ConfigMap"
+    and .old.data.release == "one" and .new.data.release == "two")' ks.json
+"$lib/kustomization-scope.sh" ks.json "$root/pr" "$root/base" clusters/e2e > scope.json
 KS_SCOPE=scope.json HEAD_SHA=0000000 "$lib/flux-diff-comment.sh" diff.json ks.json
 check "comments the chart bump" grep -q '^| `flux-system/podinfo` | `podinfo` 6.16.0 → 6.17.0 |' comment.md
 check "diffs a remote resource bump" bash -c 'grep -q "^| \`flux-system/remote\` | remote \`raw.githubusercontent.com/…/6.17.0/kustomize/deployment.yaml\` |" comment.md && grep -q "^+ *image: ghcr.io/stefanprodan/podinfo:6.17.0$" comment.md'
 check "summarizes a CRD from a shared base" bash -c 'grep -q "^| \`flux-system/crds\` | shared base or variable |" comment.md && grep -q "^| \`widgets.example.com\` | v1 (storage) | v1: +1 (\`spec.color\`) |$" comment.md'
 check "diffs a component added to a kustomization" bash -c 'grep -q "^| \`flux-system/whoami\` | kustomization edited |" comment.md && grep -q "^+ *team: platform$" comment.md'
-check "only counts the Kustomizations whose manifests the pull request edits" bash -c '! grep -q "^--- HelmRelease flux-system/podinfo" comment-full.md && grep -q "^_2 more Kustomizations changed exactly as the pull request diff shows._$" comment.md'
+check "only counts the Kustomizations whose manifests the pull request edits" bash -c '! grep -q "^--- HelmRelease flux-system/podinfo" comment-full.md && grep -q "^_3 more Kustomizations changed exactly as the pull request diff shows._$" comment.md'
 check "leaves out the values ConfigMaps of a changed HelmRelease" bash -c '! grep -q "^--- ConfigMap flux-system/traefik-values" comment-full.md'
+
+echo "# SOPS left encrypted"
+# What the placeholders prevent, as flate 0.8 does it: an encrypted key is dropped
+# without a warning, so a valuesFrom loses its value and a substituteFrom variable empties
+mkdir "$work/raw" && cd "$work/raw"
+SOPS_PATTERN='' "$here/setup.sh"
+rc=0
+flate diff hr --path pr/clusters/e2e --path-orig base/clusters/e2e -o json > hr.json || rc=$?
+check "renders HelmReleases with an encrypted valuesFrom key" test "$rc" = 0
+check "leaves the encrypted valuesFrom key out of the values" \
+  jq -e 'any(.changes[]; .parent.name == "podinfo" and .kind == "Deployment"
+    and all(.new.spec.template.spec.containers[].env[]?; .name != "PODINFO_UI_MESSAGE"))' hr.json
+rc=0
+flate diff ks --skip-kinds Secret --path pr/clusters/e2e --path-orig base/clusters/e2e -o json > ks.json || rc=$?
+check "renders Kustomizations with an encrypted substituteFrom key" test "$rc" = 0
+check "empties a variable read from an encrypted key" \
+  jq -e 'any(.changes[]; .parent.name == "whoami" and .kind == "Deployment"
+    and (.new.spec.template.metadata.labels.env // "") == "")' ks.json
 
 echo
 if (( failures > 0 )); then echo "$failures failure(s)"; exit 1; fi

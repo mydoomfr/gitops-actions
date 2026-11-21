@@ -2,6 +2,8 @@
 # Usage:
 #   cve.sh scan <targets.json>   writes one scan-<name>-<n>.json per target into OUT_DIR
 #   cve.sh render <scan.json>... writes comment.md, plus comment-full.md without row nor size limit
+#   cve.sh noop                  writes comment.md saying no image changed, under the usual
+#                                heading: NOOP_MESSAGE, its {sha} replaced, then a link to RUN_URL
 # A target is {name, new_label, new_source, old_label?, old_source?}, sources being grype
 # ones (registry:, docker-archive:...): scan compares the new image with the old one.
 # SEVERITIES (comma or space separated) picks the severities listed in detail and
@@ -11,6 +13,16 @@ set -euo pipefail
 : "${GRYPE:=grype}" "${PLATFORM:=linux/amd64}" "${OUT_DIR:=.}" "${MAX_ROWS:=30}" "${MAX_CHARS:=60000}"
 : "${HEAD_SHA:=}" "${RUN_URL:=}" "${TITLE:=Image CVEs}" "${NAME_HEADER:=Image}" "${NOTES:=}"
 : "${SEVERITIES:=Critical,High}"
+
+# No image changed: says so, so that a quiet pull request does not look like a skipped run.
+# Before the severities are read, which a no-op does not use and must not fail on
+if [[ ${1:-} == noop ]]; then
+  message=${NOOP_MESSAGE-✅ No container image changed.}
+  message=${message//\{sha\}/${HEAD_SHA::7}}
+  printf '### %s (%s)\n\n%s\n' "$TITLE" "${HEAD_SHA::7}" \
+    "$message${RUN_URL:+${message:+ }See the [run]($RUN_URL).}" | tee comment-full.md > comment.md
+  exit 0
+fi
 
 # Canonical severities in rank order, such as ["Critical","High"]; fails on an unknown one
 SEVERITY_LIST=$(jq -cn --arg s "$SEVERITIES" '
@@ -128,7 +140,7 @@ case $1 in
     if (( $(wc -c < comment.md) > MAX_CHARS )); then render false "$MAX_ROWS" "$@" > comment.md; fi
     ;;
   *)
-    echo "usage: $0 scan <targets.json> | render <scan.json>..." >&2
+    echo "usage: $0 scan <targets.json> | render <scan.json>... | noop" >&2
     exit 2
     ;;
 esac
