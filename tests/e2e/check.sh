@@ -38,6 +38,14 @@ for release in traefik podinfo; do
   check "renders the $release Deployment" \
     jq -e --arg r "$release" 'any(.changes[]; .parent.name == $r and .kind == "Deployment")' diff.json
 done
+# flux-images runs diff all: flate 0.7.3 dropped the traefik HelmRelease (chartRef) from it, without a warning
+rc=0
+flate diff all --path "$root/pr/clusters/e2e" --path-orig "$root/base/clusters/e2e" -o json > all.json || rc=$?
+check "diff all renders without error" test "$rc" = 0
+check "diff all suppresses nothing" jq -e '.suppressed // [] | length == 0' all.json
+check "diff all renders the HelmReleases diff hr renders" \
+  diff -u <(jq -r '[.changes[] | select(.parent.kind == "HelmRelease") | "\(.parent.name) \(.kind) \(.name)"] | unique[]' diff.json) \
+  <(jq -r '[.changes[] | select(.parent.kind == "HelmRelease") | "\(.parent.name) \(.kind) \(.name)"] | unique[]' all.json)
 check "renders a valuesFrom read from a SOPS Secret" \
   jq -e 'any(.changes[]; .parent.name == "podinfo" and .kind == "Deployment"
     and any(.new.spec.template.spec.containers[].env[]?; .name == "PODINFO_UI_MESSAGE" and .value == "sops-redacted"))' diff.json

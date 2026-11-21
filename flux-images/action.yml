@@ -31,12 +31,8 @@ runs:
       run: |
         mkdir -p "$RUNNER_TEMP/flux-images"
         unset FLATE_BASE # exported by the flate action, mutually exclusive with --path-orig
-        # One run per kind: flate 0.7 `diff all` and `diff images` skip some HelmReleases
-        # that `diff hr` renders ("chart source ... not in store at reconcile time")
-        for kind in hr ks; do
-          flate diff "$kind" --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$RUNNER_TEMP/flux-images/$kind.json" ||
-            echo "partial=true" >> "$GITHUB_OUTPUT"
-        done
+        flate diff all --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$RUNNER_TEMP/flux-images/all.json" ||
+          echo "partial=true" >> "$GITHUB_OUTPUT"
 
     - name: List changed images
       shell: bash
@@ -46,5 +42,5 @@ runs:
         PARTIAL: ${{ steps.diff.outputs.partial }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
-        "$GITHUB_ACTION_PATH/../lib/flux-images.sh" hr.json ks.json
+        "$GITHUB_ACTION_PATH/../lib/flux-images.sh" all.json
         jq -r '.[] | "\(.old_source // "new") → \(.new_source)"' targets.json

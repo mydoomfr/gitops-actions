@@ -51,7 +51,7 @@ runs:
         # Render failures still print the other changes, with the failed producers under .suppressed
         flate diff hr --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$dir/hr.json" ||
           echo "partial=true" >> "$GITHUB_OUTPUT"
-        # A separate run, not `diff all`: flate 0.7 `diff all` skips some HelmReleases
+        # A separate run, not `diff all`: a Kustomization failure stays a warning, --skip-kinds spares HelmReleases
         if [[ $KUSTOMIZATIONS != none ]]; then
           if ! flate diff ks --skip-kinds "$SKIP_KINDS" --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" \
             -o json > "$dir/ks.json"; then
