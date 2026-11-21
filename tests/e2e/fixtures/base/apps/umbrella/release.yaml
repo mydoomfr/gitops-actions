@@ -1,0 +1,17 @@
+---
+# A chart of this repository whose dependency is a file:// subchart
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: umbrella
+  namespace: flux-system
+spec:
+  interval: 1h
+  releaseName: umbrella
+  targetNamespace: default
+  chart:
+    spec:
+      chart: ./charts/umbrella
+      sourceRef:
+        kind: GitRepository
+        name: flux-system

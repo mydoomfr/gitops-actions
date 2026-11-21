@@ -27,11 +27,10 @@ matching the `sops-values-pattern` input (`*.y*ml`) that hold SOPS metadata.
 
 ## Secrets read by `valuesFrom` and `substituteFrom`
 
-Without the key, the encrypted keys of a Secret are dropped: a HelmRelease whose
-`valuesFrom` needs one fails to render, and a Kustomization `postBuild.substituteFrom`
-variable is left as `${VAR}`, or replaced by its `${VAR:=default}` or an empty string
-when substitution runs anyway (other readable or inline variables, or the `Always`
-strategy). `flux-setup` gives placeholders to the `data`, `stringData` and `binaryData`
+Without the key, the encrypted keys of a Secret are dropped, silently: the render
+succeeds, but a `valuesFrom` that reads one is left out of the values, and a
+`postBuild.substituteFrom` variable that reads one is replaced by nothing, an empty or
+null value (or its `${VAR:=default}`). The diff then misses whatever those values drive. `flux-setup` gives placeholders to the `data`, `stringData` and `binaryData`
 of SOPS-encrypted Secrets and ConfigMaps too, without any dummy file to maintain:
 
 ```yaml
