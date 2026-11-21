@@ -23,6 +23,12 @@ inputs:
       Comma-separated kinds left out of the Kustomization diff. CRDs are summarized,
       Secret values are always masked.
     default: Secret
+  allow-missing-kinds:
+    description: >-
+      Comma-separated input kinds (Secret, ConfigMap, CustomResourceDefinition) flate may
+      render without, with a warning, instead of failing: a substituteFrom or valuesFrom
+      object created in the cluster, a source whose credentials CI lacks. Empty to fail.
+    default: ""
   max-chars:
     description: Size above which a section is replaced by a link to the run summary
     default: "60000"
@@ -43,17 +49,20 @@ runs:
         CLUSTER_PATH: ${{ inputs.path }}
         KUSTOMIZATIONS: ${{ inputs.kustomizations }}
         SKIP_KINDS: ${{ inputs.kustomization-skip-kinds }}
+        ALLOW_MISSING_KINDS: ${{ inputs.allow-missing-kinds }}
       run: |
         dir=$RUNNER_TEMP/flux-diff
         mkdir -p "$dir"
         : > "$dir/ks.json"
         unset FLATE_BASE # exported by the flate action, mutually exclusive with --path-orig
+        args=()
+        if [[ -n $ALLOW_MISSING_KINDS ]]; then args+=(--allow-missing-kinds "$ALLOW_MISSING_KINDS"); fi
         # Render failures still print the other changes, with the failed producers under .suppressed
-        flate diff hr --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$dir/hr.json" ||
+        flate diff hr "${args[@]}" --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" -o json > "$dir/hr.json" ||
           echo "partial=true" >> "$GITHUB_OUTPUT"
         # A separate run, not `diff all`: a Kustomization failure stays a warning, --skip-kinds spares HelmReleases
         if [[ $KUSTOMIZATIONS != none ]]; then
-          if ! flate diff ks --skip-kinds "$SKIP_KINDS" --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" \
+          if ! flate diff ks "${args[@]}" --skip-kinds "$SKIP_KINDS" --path "pr/$CLUSTER_PATH" --path-orig "base/$CLUSTER_PATH" \
             -o json > "$dir/ks.json"; then
             # Only a warning: a Kustomization flate cannot render must not fail the HelmRelease check
             echo "::warning::flate could not render every Kustomization, see the comment and the logs above"
