@@ -157,20 +157,28 @@ DaemonSet, such as a CNI or a CSI driver, stays quiet:
 |---|---|
 | `privileged` | A container or init container becomes privileged, or is created privileged, in any object with a pod spec: Pod, workload template, CronJob |
 | `replicas-zero` | A Deployment, StatefulSet, ReplicaSet or ReplicationController goes to `replicas: 0`, an unset count being 1, or is created with it |
-| `rbac-widened` | A ClusterRoleBinding is created, or gains subjects; one removed and recreated under another name with the same role and subjects is a rename |
+| `rbac-widened` | A ClusterRoleBinding is created, or gains subjects; one renamed, another with the same role going away, only counts the subjects it adds |
+
+An object that moves to another producer is compared with its previous manifest, not
+taken for a new one. Not checked: `hostPID`, `hostNetwork`, `hostPath` volumes, added
+capabilities, a RoleBinding to a powerful ClusterRole, a ClusterRole whose rules grow.
 
 ## Routine updates
 
 A pull request whose every rendered change only bumps an image reference or a version is
 labelled **Routine update** at the top of the comment, a hint that it reads quickly:
 
-- an `image` field, or the `image.tag` and `image.digest` of Helm values;
+- the `image` of a container, of Helm values or of a custom resource `spec.image`, to
+  another tag or digest of the same repository: another registry or repository is not
+  routine;
+- an `image.tag` or `image.digest` in Helm values or a custom resource spec;
 - the `helm.sh/chart` and `app.kubernetes.io/version` labels;
 - the `ref.tag`, `ref.digest` or `ref.semver` of an OCIRepository, the `ref.tag` or
   `ref.semver` of a GitRepository, the chart version or chart `ref` of a HelmRelease.
 
 Anything else keeps the label off: another field, an added or removed object, a list that
-grows or shrinks, a warning, a render that failed, or `kustomizations: none`. The kinds
+grows or shrinks, a warning, a render that failed, or `kustomizations: none`. A warning
+counts even with `lint: false`: a Job image bump, for one, fails the reconciliation. The kinds
 left out of the diff (`helmrelease-skip-kinds`, `kustomization-skip-kinds`) are not
 compared, and the label names them.
 

@@ -68,3 +68,6 @@ helm-controller v1.7.2, source-controller v1.10.2, Helm v4.3.2 and flate v0.8.0.
 - Pod Security admits a Deployment whose template is privileged, with a warning, and
   rejects its Pods: the reconciliation succeeds and the Pods never start (S1).
 - An HPA, or any controller, may set `spec.replicas` again after a scale to zero (S3).
+- Other ways to the node than a privileged container: `hostPID`, `hostNetwork`,
+  `hostPath` volumes, added capabilities such as `SYS_ADMIN` (S1). Other grants than a
+  ClusterRoleBinding: a RoleBinding to `cluster-admin`, a ClusterRole whose rules grow (S4).

@@ -192,14 +192,18 @@ def privileged_containers: [objects | pod_specs | (.containers, .initContainers)
 
 def subject_label: "\(.kind) \(if (.namespace // "") != "" then "\(.namespace)/" else "" end)\(.name)";
 
-# A ClusterRoleBinding by what it grants, to tell a rename from a new grant
-def grant: {cluster: (.cluster // ""), roleRef: .manifest.roleRef, subjects: (.manifest.subjects // [] | map(subject_label) | sort)};
+# An object across producers, to tell a move from a creation
+def object_key: [.cluster // "", lint_group, .kind, .namespace // "", .name] | tojson;
 
 # What the pull request makes riskier, not what already was: a container that becomes
 # privileged, a workload scaled to zero, a role granted cluster-wide to new subjects.
-# $renamed: the grants of the ClusterRoleBindings the pull request removes
-def transitions($renamed):
+# $removed: the removed objects by object_key; an added one among them has moved, and is
+# compared with its old manifest. A ClusterRoleBinding created while another with the same
+# role goes is a rename: only the subjects it adds count
+def transitions($removed):
   select(.status != "removed" and (.new | type) == "object")
+  | if .status == "added" and $removed[object_key] != null
+    then .old = $removed[object_key].old | .status = "changed" else . end
   | {resource: "\(.kind) \(lint_id)", parent: lint_parent} as $at
   | (.status == "added") as $created
   | (((.new | privileged_containers) - (.old | privileged_containers))[]
@@ -212,18 +216,20 @@ def transitions($renamed):
           $at + {rule: "replicas-zero", detail: "`spec.replicas` \(.old.spec.replicas // "1 (unset)") → 0: no pod runs any more"}
         else empty end),
     (select(is("rbac.authorization.k8s.io"; ["ClusterRoleBinding"]))
-      | select(($created and ({cluster, manifest: .new} | grant | IN($renamed[]))) | not)
-      | ((.new.subjects // [] | map(subject_label)) - (.old.subjects // [] | map(subject_label)) | unique) as $granted
+      | (.cluster // "") as $c | .new.roleRef as $role
+      | (if $created then [$removed[] | select((.cluster // "") == $c and .old.roleRef == $role
+            and is("rbac.authorization.k8s.io"; ["ClusterRoleBinding"])) | .old]
+         else [.old] end) as $before
+      | ((.new.subjects // [] | map(subject_label)) - [$before[].subjects // [] | .[] | subject_label] | unique) as $granted
       | select($granted != [])
       | "`\(.new.roleRef.kind) \(.new.roleRef.name)` cluster-wide to \($granted | map("`\(.)`") | join(", "))" as $what
-      | $at + {rule: "rbac-widened", detail: (if $created then "grants \($what)" else "now also grants \($what)" end)});
+      | $at + {rule: "rbac-widened", detail: (if $before == [] then "grants \($what)" else "now also grants \($what)" end)});
 
 # lint: .removal_kinds overrides the kinds flagged when deleted
 def lint:
   . as $ctx
-  | [.changes[] | select(.status == "removed" and is("rbac.authorization.k8s.io"; ["ClusterRoleBinding"]))
-      | {cluster, manifest: .old} | grant] as $renamed
-  | [(.changes[] | immutable, transitions($renamed)),
+  | (reduce (.changes[] | select(.status == "removed")) as $r ({}; . + {($r | object_key): $r})) as $removed
+  | [(.changes[] | immutable, transitions($removed)),
      removals($ctx; $ctx.removal_kinds // removal_kinds)]
   | unique_by(.resource, .parent, .rule, .detail);
 
@@ -238,12 +244,23 @@ def diff_paths($o; $n):
   elif $o == $n then empty
   else [] end;
 
-# A path that only selects which image or version runs: an image reference, its tag or
-# digest in Helm values, the chart version labels, a Flux source tag, digest or semver
-# range, a HelmRelease chart version (R1, R2, R3)
+# The repository of an image reference, without its tag or digest; a registry port stays
+def image_repo: sub("@.*$"; "") | sub(":[^/:]*$"; "");
+
+# A path that only selects which image or version runs (R1, R2, R3):
+# - an image reference of a container, of Helm values or of a custom resource spec.image,
+#   to another tag or digest of the same repository;
+# - an image tag or digest in Helm values or a custom resource spec;
+# - the chart version labels;
+# - a Flux source tag, digest or semver range, a HelmRelease chart version.
 def routine_path($change): . as $p | length as $n
-  | $n > 0 and ($p[-1] == "image"
-    or ($n >= 2 and $p[-2] == "image" and ($p[-1] | IN("tag", "digest")))
+  | ($n >= 2 and $p[0] == "spec" and ($change | is("helm.toolkit.fluxcd.io"; ["HelmRelease"]))
+      and $p[1] == "values") as $values
+  | $n > 0 and (
+    ($p[-1] == "image" and ($values or $p == ["spec", "image"]
+        or ($n >= 3 and ($p[-3] | IN("containers", "initContainers"))))
+      and ([$change.old, $change.new | getpath($p) | strings | image_repo] | length == 2 and .[0] == .[1]))
+    or ($n >= 2 and $p[0] == "spec" and $p[-2] == "image" and ($p[-1] | IN("tag", "digest")))
     or ($n >= 2 and $p[-2] == "labels" and ($p[-1] | IN("helm.sh/chart", "app.kubernetes.io/version")))
     or ($change | is("source.toolkit.fluxcd.io"; ["OCIRepository"])) and ($p | IN(["spec", "ref", "tag"], ["spec", "ref", "digest"], ["spec", "ref", "semver"]))
     or ($change | is("source.toolkit.fluxcd.io"; ["GitRepository"])) and ($p | IN(["spec", "ref", "tag"], ["spec", "ref", "semver"]))

@@ -547,3 +547,58 @@
   changes: []
   expect: []
   routine: false
+
+# Found by review: moves, renames and what an image change really is
+
+- name: a privileged or scaled-down object that moves is not new
+  refs: [S1, S3]
+  changes:
+    - {kind: DaemonSet, name: cni, parent: Kustomization/infra, old: {spec: {template: {spec: {containers: [{name: agent, securityContext: {privileged: true}}]}}}}}
+    - {kind: DaemonSet, name: cni, parent: Kustomization/network, new: {spec: {template: {spec: {containers: [{name: agent, securityContext: {privileged: true}}]}}}}}
+    - {kind: Deployment, name: parked, parent: Kustomization/infra, old: {spec: {replicas: 0}}}
+    - {kind: Deployment, name: parked, parent: Kustomization/network, new: {spec: {replicas: 0}}}
+    - {kind: Deployment, name: stopped, parent: Kustomization/infra, old: {spec: {replicas: 2}}}
+    - {kind: Deployment, name: stopped, parent: Kustomization/network, new: {spec: {replicas: 0}}}
+  expect:
+    - 'replicas-zero Deployment apps/stopped (Kustomization flux-system/network): `spec.replicas` 2 → 0: no pod runs any more'
+
+- name: a renamed ClusterRoleBinding reports only the subjects it adds
+  refs: [S4]
+  changes:
+    - {kind: ClusterRoleBinding, name: view-devs, old: {roleRef: {kind: ClusterRole, name: view}, subjects: [{kind: Group, name: devs}]}}
+    - {kind: ClusterRoleBinding, name: viewers, new: {roleRef: {kind: ClusterRole, name: view}, subjects: [{kind: Group, name: devs}, {kind: User, name: eve}]}}
+  expect:
+    - 'rbac-widened ClusterRoleBinding viewers (Kustomization flux-system/apps): now also grants `ClusterRole view` cluster-wide to `User eve`'
+
+- name: an image from another repository is not routine
+  refs: [R1]
+  changes:
+    - {kind: Deployment, old: {spec: {template: {spec: {containers: [{image: 'ghcr.io/org/app:1.0'}]}}}},
+       new: {spec: {template: {spec: {containers: [{image: 'docker.io/someone/app:1.0'}]}}}}}
+  expect: []
+  routine: false
+
+- name: a tag or digest change of the same repository is routine, registry port included
+  refs: [R1]
+  changes:
+    - {kind: Deployment, old: {spec: {template: {spec: {containers: [{image: 'registry.local:5000/app:1.0'}]}}}},
+       new: {spec: {template: {spec: {containers: [{image: 'registry.local:5000/app:1.1@sha256:abc'}]}}}}}
+    - {kind: HelmRelease, name: app, parent: Kustomization/flux-system,
+       old: {spec: {values: {image: 'ghcr.io/org/app:1'}}}, new: {spec: {values: {image: 'ghcr.io/org/app:2'}}}}
+  expect: []
+  routine: true
+
+- name: a field named image outside a pod spec, Helm values or spec.image is not routine
+  refs: [R1]
+  changes:
+    - {kind: ConfigMap, old: {data: {image: 'app:1'}}, new: {data: {image: 'app:2'}}}
+  expect: []
+  routine: false
+
+- name: a Job image bump fails the reconciliation, so it is not routine
+  refs: [K3]
+  changes:
+    - {kind: Job, old: {spec: {template: {spec: {containers: [{image: 'm:1'}]}}}}, new: {spec: {template: {spec: {containers: [{image: 'm:2'}]}}}}}
+  expect:
+    - 'immutable-field Job apps/x (Kustomization flux-system/apps): `spec.template` changed'
+  routine: false
