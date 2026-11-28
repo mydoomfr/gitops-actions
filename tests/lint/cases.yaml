@@ -3,7 +3,8 @@
 # `refs` name the rows of SEMANTICS.md the case checks. tests/run.sh fills the rest of
 # each change (case.jq): name x, namespace apps, parent Kustomization/apps, apiVersion
 # by kind, status from old and new. `prune` lists the Kustomizations kustomization-prune.sh
-# would print, `removal_kinds` replaces the default kinds.
+# would print, `removal_kinds` replaces the default kinds. `routine`, when set, is the
+# expected result of routine (the "routine update" label).
 
 # Immutable fields
 
@@ -399,3 +400,150 @@
     - {kind: StatefulSet, apiVersion: apps.kruise.io/v1beta1, new: {}}
   expect:
     - 'removed StatefulSet apps/x (Kustomization flux-system/apps): deleted on merge: its pods stop, its PersistentVolumeClaims stay'
+
+# Security transitions: only what the pull request introduces
+
+- name: a container that becomes privileged
+  refs: [S1, S2]
+  changes:
+    - {kind: Deployment, old: {spec: {template: {spec: {containers: [{name: app, image: a:1}]}}}},
+       new: {spec: {template: {spec: {containers: [{name: app, image: a:1, securityContext: {privileged: true}}]}}}}}
+  expect:
+    - 'privileged Deployment apps/x (Kustomization flux-system/apps): container `app` now runs privileged'
+
+- name: an already privileged container is not flagged again
+  refs: [S1]
+  changes:
+    - {kind: DaemonSet, name: cni, old: {spec: {template: {spec: {containers: [{name: cni, image: c:1, securityContext: {privileged: true}}]}}}},
+       new: {spec: {template: {spec: {containers: [{name: cni, image: c:2, securityContext: {privileged: true}}]}}}}}
+  expect: []
+  routine: true
+
+- name: privileged containers of a created object, wherever the pod spec is
+  refs: [S1, S2]
+  changes:
+    - {kind: DaemonSet, name: ds, new: {spec: {template: {spec: {initContainers: [{name: init, securityContext: {privileged: true}}],
+        containers: [{name: main}]}}}}}
+    - {kind: CronJob, name: cron, new: {spec: {jobTemplate: {spec: {template: {spec: {containers: [{name: job, securityContext: {privileged: true}}]}}}}}}}
+    - {kind: Pod, name: pod, new: {spec: {containers: [{name: debug, securityContext: {privileged: true}}]}}}
+  expect:
+    - 'privileged CronJob apps/cron (Kustomization flux-system/apps): container `job` runs privileged'
+    - 'privileged DaemonSet apps/ds (Kustomization flux-system/apps): container `init` runs privileged'
+    - 'privileged Pod apps/pod (Kustomization flux-system/apps): container `debug` runs privileged'
+
+- name: a removed privileged object is not flagged
+  refs: [S1]
+  changes:
+    - {kind: DaemonSet, old: {spec: {template: {spec: {containers: [{name: cni, securityContext: {privileged: true}}]}}}}}
+  expect: []
+
+- name: a workload scaled to zero
+  refs: [S3]
+  changes:
+    - {kind: Deployment, name: scaled, old: {spec: {replicas: 3}}, new: {spec: {replicas: 0}}}
+    - {kind: StatefulSet, name: unset, old: {spec: {}}, new: {spec: {replicas: 0}}}
+    - {kind: Deployment, name: still, old: {spec: {replicas: 0}}, new: {spec: {replicas: 0, paused: true}}}
+    - {kind: Deployment, name: up, old: {spec: {replicas: 0}}, new: {spec: {replicas: 1}}}
+  expect:
+    - 'replicas-zero Deployment apps/scaled (Kustomization flux-system/apps): `spec.replicas` 3 → 0: no pod runs any more'
+    - 'replicas-zero StatefulSet apps/unset (Kustomization flux-system/apps): `spec.replicas` 1 (unset) → 0: no pod runs any more'
+
+- name: a workload created with zero replicas
+  refs: [S3]
+  changes:
+    - {kind: Deployment, new: {spec: {replicas: 0}}}
+    - {kind: Deployment, name: default, new: {spec: {}}}
+    - {kind: Deployment, name: kruise, apiVersion: apps.kruise.io/v1alpha1, new: {spec: {replicas: 0}}}
+  expect:
+    - 'replicas-zero Deployment apps/x (Kustomization flux-system/apps): created with `spec.replicas: 0`: no pod runs'
+
+- name: a new ClusterRoleBinding grants its role cluster-wide
+  refs: [S4]
+  changes:
+    - {kind: ClusterRoleBinding, name: admins, new: {roleRef: {kind: ClusterRole, name: admin},
+        subjects: [{kind: ServiceAccount, name: ci, namespace: tools}, {kind: Group, name: ops}]}}
+  expect:
+    - 'rbac-widened ClusterRoleBinding admins (Kustomization flux-system/apps): grants `ClusterRole admin` cluster-wide to `Group ops`, `ServiceAccount tools/ci`'
+
+- name: a renamed ClusterRoleBinding grants nothing new
+  refs: [S4]
+  changes:
+    - {kind: ClusterRoleBinding, name: old-name, old: {roleRef: {kind: ClusterRole, name: view}, subjects: [{kind: Group, name: devs}]}}
+    - {kind: ClusterRoleBinding, name: new-name, parent: Kustomization/other, new: {roleRef: {kind: ClusterRole, name: view}, subjects: [{kind: Group, name: devs}]}}
+  expect: []
+
+- name: a ClusterRoleBinding that gains subjects
+  refs: [S4]
+  changes:
+    - {kind: ClusterRoleBinding, name: grown, old: {roleRef: {kind: ClusterRole, name: view}, subjects: [{kind: Group, name: devs}]},
+       new: {roleRef: {kind: ClusterRole, name: view}, subjects: [{kind: Group, name: devs}, {kind: User, name: eve}]}}
+    - {kind: ClusterRoleBinding, name: shrunk, old: {roleRef: {kind: ClusterRole, name: view}, subjects: [{kind: Group, name: devs}, {kind: User, name: eve}]},
+       new: {roleRef: {kind: ClusterRole, name: view}, subjects: [{kind: Group, name: devs}]}}
+  expect:
+    - 'rbac-widened ClusterRoleBinding grown (Kustomization flux-system/apps): now also grants `ClusterRole view` cluster-wide to `User eve`'
+
+# Routine updates: only image references and versions change
+
+- name: image and version bumps are routine
+  refs: [R1, R2, R3]
+  changes:
+    - {kind: Deployment, old: {metadata: {labels: {app.kubernetes.io/version: '1.0'}}, spec: {template: {metadata: {labels: {helm.sh/chart: app-1.0.0}},
+        spec: {containers: [{name: app, image: 'a:1'}], initContainers: [{name: init, image: 'b:1'}]}}}},
+       new: {metadata: {labels: {app.kubernetes.io/version: '1.1'}}, spec: {template: {metadata: {labels: {helm.sh/chart: app-1.1.0}},
+        spec: {containers: [{name: app, image: 'a:2'}], initContainers: [{name: init, image: 'b:2'}]}}}}}
+    - {kind: HelmRelease, name: app, parent: Kustomization/flux-system,
+       old: {spec: {chart: {spec: {version: 1.0.0}}, values: {image: {tag: '1'}, sidecar: {image: {digest: 'sha256:a'}}}}},
+       new: {spec: {chart: {spec: {version: 1.1.0}}, values: {image: {tag: '2'}, sidecar: {image: {digest: 'sha256:b'}}}}}}
+    - {kind: OCIRepository, name: oci, parent: Kustomization/flux-system, old: {spec: {ref: {tag: 1.0.0}}}, new: {spec: {ref: {tag: 1.1.0}}}}
+    - {kind: OCIRepository, name: pinned, parent: Kustomization/flux-system, old: {spec: {ref: {digest: 'sha256:a'}}}, new: {spec: {ref: {digest: 'sha256:b'}}}}
+    - {kind: GitRepository, name: git, parent: Kustomization/flux-system, old: {spec: {ref: {tag: v1}}}, new: {spec: {ref: {tag: v2}}}}
+    - {kind: HelmRelease, name: inline-oci, parent: Kustomization/flux-system,
+       old: {spec: {chart: {spec: {chart: app, ref: {tag: 1.0.0}}}}}, new: {spec: {chart: {spec: {chart: app, ref: {tag: 1.1.0}}}}}}
+  expect: []
+  routine: true
+
+- name: any other field, added or removed object, or list resized is not routine
+  refs: [R1]
+  changes:
+    - {kind: Deployment, old: {spec: {template: {spec: {containers: [{name: app, image: 'a:1', env: [{name: A, value: '1'}]}]}}}},
+       new: {spec: {template: {spec: {containers: [{name: app, image: 'a:2', env: [{name: A, value: '2'}]}]}}}}}
+  expect: []
+  routine: false
+
+- name: an added container is not routine
+  refs: [R1]
+  changes:
+    - {kind: Deployment, old: {spec: {template: {spec: {containers: [{image: 'a:1'}]}}}},
+       new: {spec: {template: {spec: {containers: [{image: 'a:2'}, {image: 'b:1'}]}}}}}
+  expect: []
+  routine: false
+
+- name: an added or removed object is not routine
+  refs: [R1]
+  changes:
+    - {kind: ConfigMap, new: {data: {a: '1'}}}
+  expect: []
+  routine: false
+
+- name: a repository URL or a branch is not a version
+  refs: [R1, R2]
+  changes:
+    - {kind: OCIRepository, parent: Kustomization/flux-system, old: {spec: {url: 'oci://a/app', ref: {tag: '1'}}}, new: {spec: {url: 'oci://b/app', ref: {tag: '1'}}}}
+    - {kind: GitRepository, name: git, parent: Kustomization/flux-system, old: {spec: {ref: {branch: main}}}, new: {spec: {ref: {branch: dev}}}}
+    - {kind: Deployment, name: repo, parent: HelmRelease/chart, old: {spec: {template: {spec: {containers: [{image: 'a:1'}]}}}}, new: {spec: {template: {spec: {containers: [{image: 'a:1', imagePullPolicy: Always}]}}}}}
+  expect: []
+  routine: false
+
+- name: a scale to zero is not routine
+  refs: [S3]
+  changes:
+    - {kind: Deployment, old: {spec: {replicas: 1, template: {spec: {containers: [{image: 'a:1'}]}}}}, new: {spec: {replicas: 0, template: {spec: {containers: [{image: 'a:2'}]}}}}}
+  expect:
+    - 'replicas-zero Deployment apps/x (Kustomization flux-system/apps): `spec.replicas` 1 → 0: no pod runs any more'
+  routine: false
+
+- name: no change is not routine
+  refs: [R1]
+  changes: []
+  expect: []
+  routine: false

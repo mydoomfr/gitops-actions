@@ -3,7 +3,8 @@
 def case_api: {StatefulSet: "apps/v1", Deployment: "apps/v1", DaemonSet: "apps/v1", ReplicaSet: "apps/v1",
   Job: "batch/v1", RoleBinding: "rbac.authorization.k8s.io/v1", ClusterRoleBinding: "rbac.authorization.k8s.io/v1",
   NetworkPolicy: "networking.k8s.io/v1", CustomResourceDefinition: "apiextensions.k8s.io/v1",
-  Kustomization: "kustomize.toolkit.fluxcd.io/v1", HelmRelease: "helm.toolkit.fluxcd.io/v2"}[.] // "v1";
+  Kustomization: "kustomize.toolkit.fluxcd.io/v1", HelmRelease: "helm.toolkit.fluxcd.io/v2",
+  CronJob: "batch/v1", OCIRepository: "source.toolkit.fluxcd.io/v1", GitRepository: "source.toolkit.fluxcd.io/v1"}[.] // "v1";
 
 def case_change:
   (.parent // "Kustomization/apps" | split("/")) as $p

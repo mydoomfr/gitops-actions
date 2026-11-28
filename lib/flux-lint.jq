@@ -1,6 +1,7 @@
 # Review warnings read from `flate diff -o json` changes, loaded by flux-diff-comment.sh.
 # lint: {changes, kustomizations?, removal_kinds?} -> [{rule, resource, parent, detail}], sorted
-# and without duplicates.
+# and without duplicates. routine: same input -> whether only images and versions change.
+# Each rule rests on a row of tests/lint/SEMANTICS.md, named in its comment.
 
 def lint_id: if (.namespace // "") != "" then "\(.namespace)/\(.name)" else .name end;
 # The producer of a change, with its cluster when flate reports one
@@ -182,9 +183,76 @@ def removals($ctx; $kinds):
          parent: (.[0] | lint_parent), rule: "not-pruned",
          detail: "removed from git but left in the cluster, where nothing manages \(if length == 1 then "it" else "them" end) any more"});
 
+# Every pod spec of an object: a Pod, a workload template, a CronJob job template
+def pod_specs: .spec | objects | ., (.template.spec, .jobTemplate.spec.template.spec | objects);
+# Names of the privileged containers of a manifest. Ephemeral containers cannot be set in
+# a manifest, only through the API (S1, S2)
+def privileged_containers: [objects | pod_specs | (.containers, .initContainers)
+  | arrays[] | select(.securityContext.privileged == true) | .name // "unnamed"] | unique;
+
+def subject_label: "\(.kind) \(if (.namespace // "") != "" then "\(.namespace)/" else "" end)\(.name)";
+
+# A ClusterRoleBinding by what it grants, to tell a rename from a new grant
+def grant: {cluster: (.cluster // ""), roleRef: .manifest.roleRef, subjects: (.manifest.subjects // [] | map(subject_label) | sort)};
+
+# What the pull request makes riskier, not what already was: a container that becomes
+# privileged, a workload scaled to zero, a role granted cluster-wide to new subjects.
+# $renamed: the grants of the ClusterRoleBindings the pull request removes
+def transitions($renamed):
+  select(.status != "removed" and (.new | type) == "object")
+  | {resource: "\(.kind) \(lint_id)", parent: lint_parent} as $at
+  | (.status == "added") as $created
+  | (((.new | privileged_containers) - (.old | privileged_containers))[]
+      | $at + {rule: "privileged", detail: "container `\(.)` \(if $created then "runs" else "now runs" end) privileged"}),
+    (select(is("apps"; ["Deployment", "StatefulSet", "ReplicaSet"]) or is(""; ["ReplicationController"]))
+      | select(.new.spec.replicas == 0)
+      | if $created then $at + {rule: "replicas-zero", detail: "created with `spec.replicas: 0`: no pod runs"}
+        # An unset count defaults to 1 (S3)
+        elif (.old.spec.replicas // 1) != 0 then
+          $at + {rule: "replicas-zero", detail: "`spec.replicas` \(.old.spec.replicas // "1 (unset)") → 0: no pod runs any more"}
+        else empty end),
+    (select(is("rbac.authorization.k8s.io"; ["ClusterRoleBinding"]))
+      | select(($created and ({cluster, manifest: .new} | grant | IN($renamed[]))) | not)
+      | ((.new.subjects // [] | map(subject_label)) - (.old.subjects // [] | map(subject_label)) | unique) as $granted
+      | select($granted != [])
+      | "`\(.new.roleRef.kind) \(.new.roleRef.name)` cluster-wide to \($granted | map("`\(.)`") | join(", "))" as $what
+      | $at + {rule: "rbac-widened", detail: (if $created then "grants \($what)" else "now also grants \($what)" end)});
+
 # lint: .removal_kinds overrides the kinds flagged when deleted
 def lint:
   . as $ctx
-  | [(.changes[] | immutable),
+  | [.changes[] | select(.status == "removed" and is("rbac.authorization.k8s.io"; ["ClusterRoleBinding"]))
+      | {cluster, manifest: .old} | grant] as $renamed
+  | [(.changes[] | immutable, transitions($renamed)),
      removals($ctx; $ctx.removal_kinds // removal_kinds)]
   | unique_by(.resource, .parent, .rule, .detail);
+
+# Paths of the leaves that differ between two manifests; a list that changes length is
+# reported at its own path, as a structural change
+def diff_paths($o; $n):
+  if ($o | type) == "object" and ($n | type) == "object" then
+    ($o + $n | keys[]) as $k | diff_paths($o[$k]; $n[$k]) | [$k] + .
+  elif ($o | type) == "array" and ($n | type) == "array" then
+    if ($o | length) != ($n | length) then []
+    else range(0; $o | length) as $i | diff_paths($o[$i]; $n[$i]) | [$i] + . end
+  elif $o == $n then empty
+  else [] end;
+
+# A path that only selects which image or version runs: an image reference, its tag or
+# digest in Helm values, the chart version labels, a Flux source tag, digest or semver
+# range, a HelmRelease chart version (R1, R2, R3)
+def routine_path($change): . as $p | length as $n
+  | $n > 0 and ($p[-1] == "image"
+    or ($n >= 2 and $p[-2] == "image" and ($p[-1] | IN("tag", "digest")))
+    or ($n >= 2 and $p[-2] == "labels" and ($p[-1] | IN("helm.sh/chart", "app.kubernetes.io/version")))
+    or ($change | is("source.toolkit.fluxcd.io"; ["OCIRepository"])) and ($p | IN(["spec", "ref", "tag"], ["spec", "ref", "digest"], ["spec", "ref", "semver"]))
+    or ($change | is("source.toolkit.fluxcd.io"; ["GitRepository"])) and ($p | IN(["spec", "ref", "tag"], ["spec", "ref", "semver"]))
+    or ($change | is("helm.toolkit.fluxcd.io"; ["HelmRelease"])) and ($p | IN(["spec", "chart", "spec", "version"],
+      ["spec", "chart", "spec", "ref", "tag"], ["spec", "chart", "spec", "ref", "digest"], ["spec", "chart", "spec", "ref", "semver"])));
+
+# Whether the changes only bump images and versions: nothing added or removed, nothing
+# else changed, no warning. Wary by design: a false "routine" would hide a real change
+def routine:
+  .changes != [] and lint == []
+  and all(.changes[]; . as $c | .status == "changed"
+    and ([diff_paths($c.old; $c.new)] | . != [] and all(.[]; routine_path($c))));

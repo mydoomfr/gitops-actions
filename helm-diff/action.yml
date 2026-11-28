@@ -42,8 +42,9 @@ inputs:
   lint:
     description: >-
       Warn, at the top of the comment and as annotations, about changes that will fail the
-      reconciliation, such as an immutable field updated, or that delete or leave behind an
-      object; "false" to turn it off
+      reconciliation, such as an immutable field updated, that delete or leave behind an
+      object, or that make a container privileged, scale a workload to zero or grant a role
+      cluster-wide; "false" to turn it off
     default: "true"
   removal-kinds:
     description: >-
@@ -115,6 +116,8 @@ runs:
         KS_MODE: ${{ inputs.kustomizations }}
         LINT: ${{ inputs.lint }}
         REMOVAL_KINDS: ${{ inputs.removal-kinds }}
+        SKIP_KINDS: ${{ inputs.kustomization-skip-kinds }}
+        HR_SKIP_KINDS: ${{ inputs.helmrelease-skip-kinds }}
         MAX_CHARS: ${{ inputs.max-chars }}
         MARKER: ${{ inputs.marker }}
         COMMENT_AUTHOR: ${{ inputs.author }}

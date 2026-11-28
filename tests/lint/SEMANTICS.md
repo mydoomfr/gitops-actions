@@ -5,7 +5,7 @@ with its source, before the rule. Every case of [cases.yaml](cases.yaml) names t
 it checks in `refs`, and `tests/run.sh` fails when a row has no case.
 
 Read at Kubernetes v1.37.3, kustomize-controller v1.10.2 (fluxcd/pkg ssa v0.83.0),
-helm-controller v1.7.2 and Helm v4.3.2.
+helm-controller v1.7.2, source-controller v1.10.2, Helm v4.3.2 and flate v0.8.0.
 
 ## Kubernetes
 
@@ -21,6 +21,10 @@ helm-controller v1.7.2 and Helm v4.3.2.
 | K8 | A StatefulSet with `whenDeleted: Delete` owns its claims, which the garbage collector deletes with it; the default `Retain` keeps them | detail of `removed` and of the `force` note | [stateful_set_utils.go](https://github.com/kubernetes/kubernetes/blob/v1.37.3/pkg/controller/statefulset/stateful_set_utils.go#L333-L357) |
 | K9 | The TTL controller deletes a finished Job `ttlSecondsAfterFinished` seconds after it finished | note on a Job `immutable-field`, read on the Job in the cluster | [ttlafterfinished_controller.go](https://github.com/kubernetes/kubernetes/blob/v1.37.3/pkg/controller/ttlafterfinished/ttlafterfinished_controller.go#L287-L302) |
 | K10 | Deleting a CRD deletes all its custom resources; deleting a Namespace deletes every namespaced object in it | detail of `removed` | [crd_finalizer.go](https://github.com/kubernetes/kubernetes/blob/v1.37.3/staging/src/k8s.io/apiextensions-apiserver/pkg/controller/finalizer/crd_finalizer.go#L181-L237) |
+| S1 | `securityContext.privileged: true` runs a container "essentially equivalent to root on the host"; Pod Security disallows it from the baseline level | `privileged`, on a transition only | [types.go](https://github.com/kubernetes/kubernetes/blob/v1.37.3/staging/src/k8s.io/api/core/v1/types.go#L8625-L8630) |
+| S2 | Containers and init containers carry a `securityContext`; ephemeral containers do too, but cannot be set on create nor in a pod template, only through the `ephemeralcontainers` subresource | `privileged` reads containers and init containers, in a Pod, a workload template or a CronJob job template | [validation.go](https://github.com/kubernetes/kubernetes/blob/v1.37.3/pkg/apis/core/validation/validation.go#L5768-L5771) |
+| S3 | `spec.replicas` defaults to 1 for Deployment, StatefulSet, ReplicaSet and ReplicationController; 0 is valid | `replicas-zero`, an unset count being 1 | [defaults.go](https://github.com/kubernetes/kubernetes/blob/v1.37.3/pkg/apis/apps/v1/defaults.go#L38-L42) |
+| S4 | A ClusterRoleBinding grants its ClusterRole to every request, whatever its namespace, cluster-scoped resources included; a RoleBinding only in its namespace | `rbac-widened` on a ClusterRoleBinding created or gaining subjects | [rule.go](https://github.com/kubernetes/kubernetes/blob/v1.37.3/pkg/registry/rbac/validation/rule.go#L179-L221) |
 
 ## Flux
 
@@ -44,6 +48,14 @@ helm-controller v1.7.2 and Helm v4.3.2.
 | H3 | The CRDs of `crds/` are never in the release manifest: never upgraded nor deleted. CRDs of `templates/` are deleted like any object | detail of `removed` for a CRD under a HelmRelease | [install.go](https://github.com/helm/helm/blob/v4.3.2/pkg/action/install.go#L331-L337) |
 | H4 | Hooks are created, never updated; the delete policy, `before-hook-creation` by default, deletes the previous one first. With a policy without it nor `hook-succeeded`, the previous Job stays and the new one fails | hook Jobs pass unless their policy keeps the previous one | [hooks.go](https://github.com/helm/helm/blob/v4.3.2/pkg/action/hooks.go#L76-L107) |
 
+## Versions
+
+| Id | Behavior | In the lint | Source |
+|---|---|---|---|
+| R1 | An OCIRepository selects its artifact with `ref.digest`, `ref.semver` (narrowed by `semverFilter`) or `ref.tag`; a GitRepository with `ref.commit`, `name`, `semver`, `tag` or `branch` | routine: a tag, digest or semver range; not a branch, a commit or a filter | [ocirepository_types.go](https://github.com/fluxcd/source-controller/blob/v1.10.2/api/v1/ocirepository_types.go#L152-L170) |
+| R2 | A HelmRelease selects its chart version with `spec.chart.spec.version`, or `spec.chart.spec.ref` for an inline OCIRepository; with `chartRef`, from the referenced object | routine: those fields | [helmrelease_types.go](https://github.com/fluxcd/helm-controller/blob/v1.7.2/api/v2/helmrelease_types.go#L372-L437) |
+| R3 | flate leaves out of its diff `helm.sh/chart`, `app.kubernetes.io/version`, `chart` and `checksum/*`, in the labels and annotations of the object, its pod templates and its claim templates | routine: those labels pass, should a render keep them | [strip.go](https://github.com/home-operations/flate/blob/v0.8.0/internal/engine/diff/strip.go#L10-L15) |
+
 ## Not checked
 
 - Helm refuses to adopt an existing object without its ownership metadata
@@ -53,3 +65,6 @@ helm-controller v1.7.2 and Helm v4.3.2.
 - A suspended Kustomization or HelmRelease applies and deletes nothing (F4, F7).
 - A Pending PVC refuses a new storage request too (K4); a `storageClassName` set from nil
   to the value of its beta annotation is allowed.
+- Pod Security admits a Deployment whose template is privileged, with a warning, and
+  rejects its Pods: the reconciliation succeeds and the Pods never start (S1).
+- An HPA, or any controller, may set `spec.replicas` again after a scale to zero (S3).

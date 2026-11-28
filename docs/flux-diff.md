@@ -148,6 +148,32 @@ by its `deletionPolicy` and `prune`, and a HelmRelease uninstalls them. Left in 
 cluster, it keeps them, and nothing is flagged. With `kustomizations: none`, a removed
 HelmRelease is not in the diff, and its objects are reported as deleted.
 
+## Risks the pull request adds
+
+Only what the pull request changes is flagged, so a chart bump of an already privileged
+DaemonSet, such as a CNI or a CSI driver, stays quiet:
+
+| Rule | Change |
+|---|---|
+| `privileged` | A container or init container becomes privileged, or is created privileged, in any object with a pod spec: Pod, workload template, CronJob |
+| `replicas-zero` | A Deployment, StatefulSet, ReplicaSet or ReplicationController goes to `replicas: 0`, an unset count being 1, or is created with it |
+| `rbac-widened` | A ClusterRoleBinding is created, or gains subjects; one removed and recreated under another name with the same role and subjects is a rename |
+
+## Routine updates
+
+A pull request whose every rendered change only bumps an image reference or a version is
+labelled **Routine update** at the top of the comment, a hint that it reads quickly:
+
+- an `image` field, or the `image.tag` and `image.digest` of Helm values;
+- the `helm.sh/chart` and `app.kubernetes.io/version` labels;
+- the `ref.tag`, `ref.digest` or `ref.semver` of an OCIRepository, the `ref.tag` or
+  `ref.semver` of a GitRepository, the chart version or chart `ref` of a HelmRelease.
+
+Anything else keeps the label off: another field, an added or removed object, a list that
+grows or shrinks, a warning, a render that failed, or `kustomizations: none`. The kinds
+left out of the diff (`helmrelease-skip-kinds`, `kustomization-skip-kinds`) are not
+compared, and the label names them.
+
 ## Flux sources
 
 - A source that a Kustomization reads and that nothing in the repository declares or
