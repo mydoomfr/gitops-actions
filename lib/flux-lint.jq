@@ -11,6 +11,8 @@ def lint_parent: "\(.parent.kind) \(.parent | lint_id)\(if (.cluster // "") | IN
 def lint_group: [.apiVersion, .new.apiVersion, .old.apiVersion | strings | select(. != "")][0] // ""
   | if test("/") then split("/")[0] else "" end;
 def is($group; $kinds): lint_group == $group and (.kind | IN($kinds[]));
+# An object across producers: removed from one and added to another, it moves
+def object_key: [.cluster // "", lint_group, .kind, .namespace // "", .name] | tojson;
 
 # Fields of spec that differ between both sides, as spec.<key>
 def changed_keys($keys): (.old.spec // {}) as $o | (.new.spec // {}) as $n
@@ -165,10 +167,9 @@ def removal_risk:
 # no set order. $kinds: the kinds worth a warning when deleted
 def removals($ctx; $kinds):
   lint_index($ctx) as $idx
-  | def move_key: [.cluster // "", lint_group, .kind, .namespace // "", .name] | tojson;
-  (reduce ($ctx.changes[] | select(.status == "added")) as $c ({}; . + {($c | move_key): ($c | lint_parent)})) as $added
+  | (reduce ($ctx.changes[] | select(.status == "added")) as $c ({}; . + {($c | object_key): ($c | lint_parent)})) as $added
   | [$ctx.changes[] | select(.status == "removed" and (.old | type) == "object")
-      | . + {fate: fate($idx), to: $added[move_key]}] as $removed
+      | . + {fate: fate($idx), to: $added[object_key]}] as $removed
   | ($removed[] | select((.fate | IN("deleted", "")) and (.kind | IN($kinds[])))
       # A custom resource reusing one of these kinds is not what the warning describes
       | select(removal_risk != "" or (.kind | IN(removal_kinds[]) | not))
@@ -183,8 +184,10 @@ def removals($ctx; $kinds):
          parent: (.[0] | lint_parent), rule: "not-pruned",
          detail: "removed from git but left in the cluster, where nothing manages \(if length == 1 then "it" else "them" end) any more"});
 
-# Every pod spec of an object: a Pod, a workload template, a CronJob job template
-def pod_specs: .spec | objects | ., (.template.spec, .jobTemplate.spec.template.spec | objects);
+# Every pod spec of an object: a Pod, a workload template, a CronJob job template, a
+# PodTemplate, which keeps it outside spec
+def pod_specs: (.spec | objects | ., (.template.spec, .jobTemplate.spec.template.spec | objects)),
+  (.template.spec | objects);
 # Names of the privileged containers of a manifest. Ephemeral containers cannot be set in
 # a manifest, only through the API (S1, S2)
 def privileged_containers: [objects | pod_specs | (.containers, .initContainers)
@@ -192,18 +195,12 @@ def privileged_containers: [objects | pod_specs | (.containers, .initContainers)
 
 def subject_label: "\(.kind) \(if (.namespace // "") != "" then "\(.namespace)/" else "" end)\(.name)";
 
-# An object across producers, to tell a move from a creation
-def object_key: [.cluster // "", lint_group, .kind, .namespace // "", .name] | tojson;
-
 # What the pull request makes riskier, not what already was: a container that becomes
 # privileged, a workload scaled to zero, a role granted cluster-wide to new subjects.
-# $removed: the removed objects by object_key; an added one among them has moved, and is
-# compared with its old manifest. A ClusterRoleBinding created while another with the same
-# role goes is a rename: only the subjects it adds count
+# $removed: the removed objects by object_key. A ClusterRoleBinding created while another
+# with the same role goes is a rename: only the subjects it adds count
 def transitions($removed):
   select(.status != "removed" and (.new | type) == "object")
-  | if .status == "added" and $removed[object_key] != null
-    then .old = $removed[object_key].old | .status = "changed" else . end
   | {resource: "\(.kind) \(lint_id)", parent: lint_parent} as $at
   | (.status == "added") as $created
   | (((.new | privileged_containers) - (.old | privileged_containers))[]
@@ -229,7 +226,11 @@ def transitions($removed):
 def lint:
   . as $ctx
   | (reduce (.changes[] | select(.status == "removed")) as $r ({}; . + {($r | object_key): $r})) as $removed
-  | [(.changes[] | immutable, transitions($removed)),
+  # An added object that another producer removes has moved: it is updated in place, so it
+  # is compared with its old manifest
+  | [(.changes[] | if .status == "added" and $removed[object_key] != null
+        then .old = $removed[object_key].old | .status = "changed" else . end
+      | immutable, transitions($removed)),
      removals($ctx; $ctx.removal_kinds // removal_kinds)]
   | unique_by(.resource, .parent, .rule, .detail);
 

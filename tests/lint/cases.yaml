@@ -602,3 +602,20 @@
   expect:
     - 'immutable-field Job apps/x (Kustomization flux-system/apps): `spec.template` changed'
   routine: false
+
+- name: an immutable field changed while the object moves still fails
+  refs: [K1]
+  changes:
+    - {kind: StatefulSet, name: db, parent: Kustomization/infra, old: {spec: {volumeClaimTemplates: [{spec: {resources: {requests: {storage: 1Gi}}}}]}}}
+    - {kind: StatefulSet, name: db, parent: Kustomization/data, new: {spec: {volumeClaimTemplates: [{spec: {resources: {requests: {storage: 2Gi}}}}]}}}
+  prune: {infra: true}
+  expect:
+    - 'immutable-field StatefulSet apps/db (Kustomization flux-system/data): `spec.volumeClaimTemplates` changed'
+    - 'removed StatefulSet apps/db (Kustomization flux-system/infra): moves to `Kustomization flux-system/data`, deleted and recreated if `Kustomization flux-system/infra` reconciles first: its pods stop, its PersistentVolumeClaims stay'
+
+- name: a PodTemplate keeps its pod spec outside spec
+  refs: [S1]
+  changes:
+    - {kind: PodTemplate, new: {template: {spec: {containers: [{name: tool, securityContext: {privileged: true}}]}}}}
+  expect:
+    - 'privileged PodTemplate apps/x (Kustomization flux-system/apps): container `tool` runs privileged'

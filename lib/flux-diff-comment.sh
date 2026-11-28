@@ -56,9 +56,11 @@ jq --slurpfile ks <(if [[ -n $KS_PRUNE ]]; then cat "$KS_PRUNE"; else echo '[]';
   '.kustomizations = $ks[0] | .removal_kinds = [$kinds | splits("[,\\s]+") | select(. != "")]' \
   "$work/raw.json" > "$work/lint-input.json"
 # Routine only when every producer rendered, Kustomizations included
-routine=false
+# with the kinds of producer it covers, to name only their skipped kinds
+routine='{"routine": false}'
 if [[ -z $PARTIAL && $KS_MODE != none ]]; then
-  routine=$(jq -L "$lib" 'include "flux-lint"; .suppressed == [] and routine' "$work/lint-input.json")
+  routine=$(jq -c -L "$lib" 'include "flux-lint"; {routine: (.suppressed == [] and routine),
+    producers: [.changes[].parent.kind] | unique}' "$work/lint-input.json")
 fi
 if [[ $LINT == false ]]; then
   echo '[]' > "$work/lint.json"
@@ -265,10 +267,11 @@ jq -r --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --arg partial "$PARTIAL" \
     ($lint | map(.rule) | unique[] | "- `\(.)`: \(why)."),
     ""
   else empty end),
-  (if $routine then
+  (if $routine.routine then
     "> [!TIP]",
     "> **Routine update**: every rendered change only bumps an image or a version."
-      + ([($hrskip | kinds | select(. != "") | "\(.) in HelmReleases"), ($ksskip | kinds | select(. != "") | "\(.) in Kustomizations")]
+      + ([($routine.producers | index("HelmRelease") | select(.) | $hrskip | kinds | select(. != "") | "\(.) in HelmReleases"),
+          ($routine.producers | index("Kustomization") | select(.) | $ksskip | kinds | select(. != "") | "\(.) in Kustomizations")]
         | if . != [] then " Not compared: \(join(", "))." else "" end),
     ""
   else empty end),

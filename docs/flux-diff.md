@@ -155,12 +155,12 @@ DaemonSet, such as a CNI or a CSI driver, stays quiet:
 
 | Rule | Change |
 |---|---|
-| `privileged` | A container or init container becomes privileged, or is created privileged, in any object with a pod spec: Pod, workload template, CronJob |
+| `privileged` | A container or init container becomes privileged, or is created privileged, in any object with a pod spec: Pod, workload template, CronJob, PodTemplate |
 | `replicas-zero` | A Deployment, StatefulSet, ReplicaSet or ReplicationController goes to `replicas: 0`, an unset count being 1, or is created with it |
 | `rbac-widened` | A ClusterRoleBinding is created, or gains subjects; one renamed, another with the same role going away, only counts the subjects it adds |
 
 An object that moves to another producer is compared with its previous manifest, not
-taken for a new one. Not checked: `hostPID`, `hostNetwork`, `hostPath` volumes, added
+taken for a new one, here and for the immutable fields above. Not checked: `hostPID`, `hostNetwork`, `hostPath` volumes, added
 capabilities, a RoleBinding to a powerful ClusterRole, a ClusterRole whose rules grow.
 
 ## Routine updates
