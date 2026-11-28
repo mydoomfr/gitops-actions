@@ -42,8 +42,15 @@ inputs:
   lint:
     description: >-
       Warn, at the top of the comment and as annotations, about changes that will fail the
-      reconciliation, such as an immutable field updated; "false" to turn it off
+      reconciliation, such as an immutable field updated, or that delete or leave behind an
+      object; "false" to turn it off
     default: "true"
+  removal-kinds:
+    description: >-
+      Comma-separated kinds warned about when Flux deletes one of their objects; empty to
+      warn about none. Objects a Kustomization stops managing without deleting them are
+      always reported
+    default: StatefulSet,PersistentVolumeClaim,Namespace,CustomResourceDefinition,NetworkPolicy
   max-chars:
     description: Size above which a section is replaced by a link to the run summary
     default: "60000"
@@ -90,6 +97,9 @@ runs:
             echo "ks-partial=true" >> "$GITHUB_OUTPUT"
           fi
           "$GITHUB_ACTION_PATH/../lib/kustomization-scope.sh" "$dir/ks.json" "$PWD/pr" "$PWD/base" "$CLUSTER_PATH" > "$dir/scope.json"
+          # The prune setting of the Kustomizations removing an object, for the lint
+          "$GITHUB_ACTION_PATH/../lib/kustomization-prune.sh" "$dir/ks.json" "pr/$CLUSTER_PATH" ${args[@]+"${args[@]}"} \
+            > "$dir/kustomizations.json"
         fi
 
     - name: Comment on the pull request
@@ -104,6 +114,7 @@ runs:
         PARTIAL: ${{ steps.diff.outputs.partial || steps.diff.outputs.ks-partial }}
         KS_MODE: ${{ inputs.kustomizations }}
         LINT: ${{ inputs.lint }}
+        REMOVAL_KINDS: ${{ inputs.removal-kinds }}
         MAX_CHARS: ${{ inputs.max-chars }}
         MARKER: ${{ inputs.marker }}
         COMMENT_AUTHOR: ${{ inputs.author }}
@@ -111,6 +122,7 @@ runs:
       run: |
         lib=$GITHUB_ACTION_PATH/../lib
         if [[ -f scope.json ]]; then export KS_SCOPE=$PWD/scope.json; fi
+        if [[ -f kustomizations.json ]]; then export KS_PRUNE=$PWD/kustomizations.json; fi
         "$lib/flux-diff-comment.sh" hr.json ks.json
         if [[ -f noop ]]; then
           cat comment.md >> "$GITHUB_STEP_SUMMARY"

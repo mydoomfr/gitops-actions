@@ -10,11 +10,13 @@
 # KS_SCOPE: output of kustomization-scope.sh. KS_MODE picks the Kustomizations listed:
 # auto (remote,source,shared,edited), all, none, or a comma-separated list of those
 # reasons and direct. The others are only counted. LINT=false turns off the warnings of
-# flux-lint.jq, which read every change, listed or not.
+# flux-lint.jq, which read every change, listed or not. KS_PRUNE: output of
+# kustomization-prune.sh. REMOVAL_KINDS: kinds warned about when deleted, comma-separated.
 set -euo pipefail
 
 : "${HEAD_SHA:=}" "${RUN_URL:=}" "${PARTIAL:=}" "${MAX_CHARS:=60000}" "${MAX_FIELDS:=5}"
-: "${KS_SCOPE:=}" "${KS_MODE:=auto}" "${LINT:=true}" "${MAX_LINT:=20}"
+: "${KS_SCOPE:=}" "${KS_MODE:=auto}" "${LINT:=true}" "${MAX_LINT:=20}" "${KS_PRUNE:=}"
+: "${REMOVAL_KINDS=StatefulSet,PersistentVolumeClaim,Namespace,CustomResourceDefinition,NetworkPolicy}"
 lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d)
 
@@ -50,7 +52,10 @@ jq -s 'map(if type == "array" then .[] else . end)
 if [[ $LINT == false ]]; then
   echo '[]' > "$work/lint.json"
 else
-  jq -L "$lib" 'include "flux-lint"; lint' "$work/raw.json" > "$work/lint.json"
+  jq -L "$lib" --slurpfile ks <(if [[ -n $KS_PRUNE ]]; then cat "$KS_PRUNE"; else echo '[]'; fi) \
+    --arg kinds "$REMOVAL_KINDS" 'include "flux-lint";
+    .kustomizations = $ks[0] | .removal_kinds = [$kinds | splits("[,\\s]+") | select(. != "")] | lint' \
+    "$work/raw.json" > "$work/lint.json"
   # Annotations on the run, every warning even when the comment lists only MAX_LINT
   jq -r '.[] | "::warning title=\(.rule)::\(.resource) (\(.parent)): \(.detail)"' "$work/lint.json" >&2
 fi
@@ -228,7 +233,9 @@ jq -r --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --arg partial "$PARTIAL" \
   def id: if (.namespace // "") != "" then "\(.namespace)/\(.name)" else .name end;
   def why: {
     "immutable-field": "the API server refuses to update these fields in place, so the reconciliation fails until the object is deleted and recreated, which Flux does when `force` is enabled",
-    "pvc-shrink": "the API server refuses to lower the storage request of a PersistentVolumeClaim, so the reconciliation fails; Flux `force` would recreate the claim, which can delete its data"
+    "pvc-shrink": "the API server refuses to lower the storage request of a PersistentVolumeClaim, so the reconciliation fails; Flux `force` would recreate the claim, which can delete its data",
+    "removed": "Flux deletes what a HelmRelease or a pruning Kustomization no longer renders, even an object moving to another one when the old one reconciles first, and deleting these objects takes more with them",
+    "not-pruned": "a Kustomization that does not prune, or removed with `deletionPolicy: Orphan`, leaves in the cluster what it no longer renders, and the pull request diff reads as if it were deleted"
   }[.] // "";
   $lint[0] as $lint
   | "### Rendered Flux diff (\($sha))", "",

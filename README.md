@@ -12,8 +12,8 @@ GitHub Actions that comment on every pull request, Renovate ones included:
 - 📦 **Flux diff**: the rendered manifests of every HelmRelease the pull request
   touches, old chart and values against new ones, plus what the git diff hides in
   Kustomizations (remote resources, other Flux sources, shared bases, CRDs). Changes
-  that will fail the reconciliation, such as an immutable field updated, are flagged
-  at the top.
+  that will fail the reconciliation, such as an immutable field updated, and risky
+  deletions, such as a PersistentVolumeClaim, are flagged at the top.
 - 🛡️ **CVE diff**: for every container image the pull request changes, the
   vulnerabilities of the old and new image side by side, then the High/Critical CVEs
   (configurable) of the new image, the ones it adds flagged 🆕, the ones it fixes. Scanned by [grype](https://github.com/anchore/grype).
