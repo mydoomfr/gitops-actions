@@ -9,11 +9,13 @@
 # and a short comment.md saying so, with the Kustomizations only counted.
 # KS_SCOPE: output of kustomization-scope.sh. KS_MODE picks the Kustomizations listed:
 # auto (remote,source,shared,edited), all, none, or a comma-separated list of those
-# reasons and direct. The others are only counted.
+# reasons and direct. The others are only counted. LINT=false turns off the warnings of
+# flux-lint.jq, which read every change, listed or not.
 set -euo pipefail
 
 : "${HEAD_SHA:=}" "${RUN_URL:=}" "${PARTIAL:=}" "${MAX_CHARS:=60000}" "${MAX_FIELDS:=5}"
-: "${KS_SCOPE:=}" "${KS_MODE:=auto}"
+: "${KS_SCOPE:=}" "${KS_MODE:=auto}" "${LINT:=true}" "${MAX_LINT:=20}"
+lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d)
 
 # Reasons a Kustomization is listed for, as kustomization-scope.sh names them
@@ -39,8 +41,19 @@ case $KS_MODE in
 esac
 
 # A file is empty when flate short-circuits identical trees, an array for multi-cluster repos
+# Each change keeps its cluster, "" for a single-cluster output
 jq -s 'map(if type == "array" then .[] else . end)
-  | {changes: map(.changes // [] | .[]), suppressed: map(.suppressed // [] | .[])}' "$@" > "$work/raw.json"
+  | {changes: map((.cluster // "") as $c | .changes // [] | .[] | . + {cluster: $c}),
+     suppressed: map(.suppressed // [] | .[])}' "$@" > "$work/raw.json"
+
+# Before the Kustomizations are filtered: a risk hides in a change the pull request diff shows too
+if [[ $LINT == false ]]; then
+  echo '[]' > "$work/lint.json"
+else
+  jq -L "$lib" 'include "flux-lint"; lint' "$work/raw.json" > "$work/lint.json"
+  # Annotations on the run, every warning even when the comment lists only MAX_LINT
+  jq -r '.[] | "::warning title=\(.rule)::\(.resource) (\(.parent)): \(.detail)"' "$work/lint.json" >&2
+fi
 
 jq --slurpfile scope <(if [[ -n $KS_SCOPE ]]; then cat "$KS_SCOPE"; else echo '{}'; fi) --arg reasons "$reasons" '
   def key: "\(.namespace // "")/\(.name)";
@@ -78,7 +91,8 @@ left() {
 shown=$(jq .shown "$work/diff.json") skipped=$(jq .skipped "$work/diff.json")
 
 # Nothing to review: say so, so that a quiet pull request does not look like a skipped run
-if [[ $(jq '.changes + .suppressed | length' "$work/diff.json") == 0 && -z $PARTIAL ]]; then
+if [[ $(jq '.changes + .suppressed | length' "$work/diff.json") == 0 && -z $PARTIAL
+  && $(jq length "$work/lint.json") == 0 ]]; then
   echo noop > noop
   if (( shown + skipped == 0 )); then
     status="✅ The rendered HelmReleases and Kustomizations are unchanged."
@@ -207,11 +221,28 @@ for ((g = 0; g < ngroups; g++)); do
   { cat "$work/head-$g.md"; fence "$work/diff-$g.md" "$work/crd-$g.md"; printf '</details>\n\n'; } > "$work/full-$g.md"
 done
 
-jq -r --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --arg partial "$PARTIAL" '
+jq -r --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --arg partial "$PARTIAL" \
+  --slurpfile lint "$work/lint.json" --argjson maxlint "$MAX_LINT" '
   def esc: gsub("\\|"; "\\|") | gsub("\n"; " ");
   def side: {orig: "base", current: "PR", both: "both"}[.] // .;
   def id: if (.namespace // "") != "" then "\(.namespace)/\(.name)" else .name end;
-  "### Rendered Flux diff (\($sha))", "",
+  def why: {
+    "immutable-field": "the API server refuses to update these fields in place, so the reconciliation fails until the object is deleted and recreated, which Flux does when `force` is enabled",
+    "pvc-shrink": "the API server refuses to lower the storage request of a PersistentVolumeClaim, so the reconciliation fails; Flux `force` would recreate the claim, which can delete its data"
+  }[.] // "";
+  $lint[0] as $lint
+  | "### Rendered Flux diff (\($sha))", "",
+  (if $lint != [] then
+    "> [!CAUTION]",
+    "> **To review before merging**",
+    "",
+    "| Object | Producer | Rule | Change |", "|---|---|---|---|",
+    ($lint[:$maxlint][] | "| `\(.resource)` | `\(.parent)` | `\(.rule)` | \(.detail | esc) |"),
+    (if ($lint | length) > $maxlint then "", "_\(($lint | length) - $maxlint) more in the [run logs](\($run))._" else empty end),
+    "",
+    ($lint | map(.rule) | unique[] | "- `\(.)`: \(why)."),
+    ""
+  else empty end),
   (if $partial != "" or .suppressed != [] then
     "> [!WARNING]",
     "> Some HelmReleases or Kustomizations failed to render and their objects are left out of the diff, see the [run logs](\($run)).",
