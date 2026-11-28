@@ -79,6 +79,36 @@ mkdir "$work/flux-cap" && cd "$work/flux-cap"
 MAX_IMAGES=1 "$lib/flux-images.sh" "$fixtures/flate-diff.json"
 check "caps the targets and counts the rest" bash -c '[[ $(jq length targets.json) == 1 ]] && grep -q "2 more image" notes.md'
 
+mkdir "$work/flux-pairs" && cd "$work/flux-pairs"
+# One change per [parent, name, old images, new images]; [] for an added or removed object
+jq -n '
+  def pod($imgs): if $imgs == [] then null
+    else {kind: "Deployment", spec: {template: {spec: {containers: [$imgs[0] | {name: "main", image: .}],
+      initContainers: [$imgs[1:][] | {name: "init", image: .}]}}}} end;
+  {changes: [
+    ["pg-a", "db", ["postgres:15.1"], ["postgres:15.2"]],
+    ["pg-b", "db", ["postgres:16.1"], ["postgres:16.2"]],
+    ["app", "app", ["ghcr.io/ex/app:1.0", "ghcr.io/ex/app:2.0"], ["ghcr.io/ex/app:1.1", "ghcr.io/ex/app:2.1"]],
+    ["svc", "old-name", ["ghcr.io/ex/svc:1.0"], []],
+    ["svc", "new-name", [], ["ghcr.io/ex/svc:1.1"]],
+    ["side", "side", ["ghcr.io/ex/side:1.0"], ["ghcr.io/ex/side:1.1", "ghcr.io/ex/side:1.2"]],
+    ["keep", "keep", ["ghcr.io/ex/keep:1.0", "ghcr.io/ex/keep:2.0"], ["ghcr.io/ex/keep:1.0"]]
+  ] | map({parent: {kind: "HelmRelease", namespace: "apps", name: .[0]}, kind: "Deployment", namespace: "apps",
+      name: .[1], status: (if .[2] == [] then "added" elif .[3] == [] then "removed" else "changed" end),
+      old: pod(.[2]), new: pod(.[3])}), suppressed: []}' > diff.json
+"$lib/flux-images.sh" diff.json
+label() { jq -r --arg n "$1" --arg l "$2" '.[] | select(.name == $n and .new_label == $l) | .old_label // "none"' targets.json; }
+export -f label
+check "pairs each object with its own old image" bash -c '[[ $(label postgres 15.2) == 15.1 && $(label postgres 16.2) == 16.1 ]]'
+check "leaves a repository changed at several versions in one object without baseline" \
+  bash -c '[[ $(label ghcr.io/ex/app 1.1) == none && $(label ghcr.io/ex/app 2.1) == none ]]'
+check "pairs an image across a renamed object" bash -c '[[ $(label ghcr.io/ex/svc 1.1) == 1.0 ]]'
+check "leaves one old image replaced by two new ones without baseline" \
+  bash -c '[[ $(label ghcr.io/ex/side 1.1) == none && $(label ghcr.io/ex/side 1.2) == none ]]'
+check "does not scan an image only removed" jq -e 'map(.name) | index("ghcr.io/ex/keep") == null' targets.json
+check "explains the images left without baseline" \
+  bash -c 'grep -q "ghcr.io/ex/app.: several versions" notes.md && grep -q "ghcr.io/ex/side.: several versions" notes.md && ! grep -q postgres notes.md'
+
 echo "# cve scan and render"
 mkdir "$work/cve" && cd "$work/cve"
 OUT_DIR=. "$lib/cve.sh" scan "$work/flux/targets.json"
