@@ -20,7 +20,7 @@ Every input of every action, with its default. Back to the [README](../README.md
 | `helmrelease-skip-kinds` | `Secret,CustomResourceDefinition` | Comma-separated kinds left out of the HelmRelease diff; keep only `Secret` to review the CRDs a chart ships, see [Charts using CRDs](flux-diff.md#charts-using-crds) |
 | `allow-missing-kinds` | empty | Comma-separated kinds (`Secret`, `ConfigMap`, `CustomResourceDefinition`) the render may do without, with a warning, see [Objects that only exist in the cluster](sops.md#objects-that-only-exist-in-the-cluster) |
 | `comment-when-unchanged` | `true` | Post a short comment when nothing renders differently; `false` only refreshes an existing comment |
-| `lint` | `true` | Warn about changes that will fail the reconciliation, such as an immutable field updated, and about removed objects; `false` to turn it off, see [Flux diff](flux-diff.md#changes-that-fail-the-reconciliation) |
+| `lint` | `true` | Warn about changes that will fail the reconciliation, such as an immutable field updated, about removed objects and about the risks a pull request adds, such as a privileged container; `false` to turn it off, see [Flux diff](flux-diff.md#changes-that-fail-the-reconciliation) |
 | `removal-kinds` | `StatefulSet,PersistentVolumeClaim,Namespace,CustomResourceDefinition,NetworkPolicy` | Comma-separated kinds warned about when Flux deletes one of their objects; empty for none, see [Removed objects](flux-diff.md#removed-objects) |
 | `max-chars` | `60000` | Size above which a section is replaced by a link to the run summary |
 | `token`, `author` | workflow token, `github-actions[bot]` | Identity that writes the comment |

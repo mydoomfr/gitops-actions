@@ -12,11 +12,14 @@
 # reasons and direct. The others are only counted. LINT=false turns off the warnings of
 # flux-lint.jq, which read every change, listed or not. KS_PRUNE: output of
 # kustomization-prune.sh. REMOVAL_KINDS: kinds warned about when deleted, comma-separated.
+# A pull request that only bumps images and versions, all rendered, is labelled routine;
+# HR_SKIP_KINDS and SKIP_KINDS name the kinds left out of that comparison.
 set -euo pipefail
 
 : "${HEAD_SHA:=}" "${RUN_URL:=}" "${PARTIAL:=}" "${MAX_CHARS:=60000}" "${MAX_FIELDS:=5}"
 : "${KS_SCOPE:=}" "${KS_MODE:=auto}" "${LINT:=true}" "${MAX_LINT:=20}" "${KS_PRUNE:=}"
 : "${REMOVAL_KINDS=StatefulSet,PersistentVolumeClaim,Namespace,CustomResourceDefinition,NetworkPolicy}"
+: "${HR_SKIP_KINDS=Secret,CustomResourceDefinition}" "${SKIP_KINDS=Secret}"
 lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d)
 
@@ -49,13 +52,20 @@ jq -s 'map(if type == "array" then .[] else . end)
      suppressed: map(.suppressed // [] | .[])}' "$@" > "$work/raw.json"
 
 # Before the Kustomizations are filtered: a risk hides in a change the pull request diff shows too
+jq --slurpfile ks <(if [[ -n $KS_PRUNE ]]; then cat "$KS_PRUNE"; else echo '[]'; fi) --arg kinds "$REMOVAL_KINDS" \
+  '.kustomizations = $ks[0] | .removal_kinds = [$kinds | splits("[,\\s]+") | select(. != "")]' \
+  "$work/raw.json" > "$work/lint-input.json"
+# Routine only when every producer rendered, Kustomizations included
+# with the kinds of producer it covers, to name only their skipped kinds
+routine='{"routine": false}'
+if [[ -z $PARTIAL && $KS_MODE != none ]]; then
+  routine=$(jq -c -L "$lib" 'include "flux-lint"; {routine: (.suppressed == [] and routine),
+    producers: [.changes[].parent.kind] | unique}' "$work/lint-input.json")
+fi
 if [[ $LINT == false ]]; then
   echo '[]' > "$work/lint.json"
 else
-  jq -L "$lib" --slurpfile ks <(if [[ -n $KS_PRUNE ]]; then cat "$KS_PRUNE"; else echo '[]'; fi) \
-    --arg kinds "$REMOVAL_KINDS" 'include "flux-lint";
-    .kustomizations = $ks[0] | .removal_kinds = [$kinds | splits("[,\\s]+") | select(. != "")] | lint' \
-    "$work/raw.json" > "$work/lint.json"
+  jq -L "$lib" 'include "flux-lint"; lint' "$work/lint-input.json" > "$work/lint.json"
   # Annotations on the run, every warning even when the comment lists only MAX_LINT
   jq -r '.[] | "::warning title=\(.rule)::\(.resource) (\(.parent)): \(.detail)"' "$work/lint.json" >&2
 fi
@@ -226,8 +236,11 @@ for ((g = 0; g < ngroups; g++)); do
   { cat "$work/head-$g.md"; fence "$work/diff-$g.md" "$work/crd-$g.md"; printf '</details>\n\n'; } > "$work/full-$g.md"
 done
 
+# Before this input, the docs set FLATE_SKIP_KINDS on the job, which flux-diff still honors
+if [[ -n ${FLATE_SKIP_KINDS:-} && $HR_SKIP_KINDS == Secret,CustomResourceDefinition ]]; then HR_SKIP_KINDS=$FLATE_SKIP_KINDS; fi
 jq -r --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --arg partial "$PARTIAL" \
-  --slurpfile lint "$work/lint.json" --argjson maxlint "$MAX_LINT" '
+  --slurpfile lint "$work/lint.json" --argjson maxlint "$MAX_LINT" --argjson routine "$routine" \
+  --arg hrskip "$HR_SKIP_KINDS" --arg ksskip "$SKIP_KINDS" '
   def esc: gsub("\\|"; "\\|") | gsub("\n"; " ");
   def side: {orig: "base", current: "PR", both: "both"}[.] // .;
   def id: if (.namespace // "") != "" then "\(.namespace)/\(.name)" else .name end;
@@ -235,8 +248,12 @@ jq -r --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --arg partial "$PARTIAL" \
     "immutable-field": "the API server refuses to update these fields in place, so the reconciliation fails until the object is deleted and recreated, which Flux does when `force` is enabled",
     "pvc-shrink": "the API server refuses to lower the storage request of a PersistentVolumeClaim, so the reconciliation fails; Flux `force` would recreate the claim, which can delete its data",
     "removed": "Flux deletes what a HelmRelease or a pruning Kustomization no longer renders, even an object moving to another one when the old one reconciles first, and deleting these objects takes more with them",
-    "not-pruned": "a Kustomization that does not prune, or removed with `deletionPolicy: Orphan`, leaves in the cluster what it no longer renders, and the pull request diff reads as if it were deleted"
+    "not-pruned": "a Kustomization that does not prune, or removed with `deletionPolicy: Orphan`, leaves in the cluster what it no longer renders, and the pull request diff reads as if it were deleted",
+    "privileged": "a privileged container gets every capability and the devices of the node, as root on it",
+    "replicas-zero": "a workload with no replica runs no pod, a one-line change in the diff",
+    "rbac-widened": "a ClusterRoleBinding grants its role in every namespace"
   }[.] // "";
+  def kinds: [splits("[,\\s]+") | select(. != "") | "`\(.)`"] | join(", ");
   $lint[0] as $lint
   | "### Rendered Flux diff (\($sha))", "",
   (if $lint != [] then
@@ -248,6 +265,14 @@ jq -r --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --arg partial "$PARTIAL" \
     (if ($lint | length) > $maxlint then "", "_\(($lint | length) - $maxlint) more in the [run logs](\($run))._" else empty end),
     "",
     ($lint | map(.rule) | unique[] | "- `\(.)`: \(why)."),
+    ""
+  else empty end),
+  (if $routine.routine then
+    "> [!TIP]",
+    "> **Routine update**: every rendered change only bumps an image or a version."
+      + ([($routine.producers | index("HelmRelease") | select(.) | $hrskip | kinds | select(. != "") | "\(.) in HelmReleases"),
+          ($routine.producers | index("Kustomization") | select(.) | $ksskip | kinds | select(. != "") | "\(.) in Kustomizations")]
+        | if . != [] then " Not compared: \(join(", "))." else "" end),
     ""
   else empty end),
   (if $partial != "" or .suppressed != [] then

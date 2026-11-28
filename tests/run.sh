@@ -198,7 +198,9 @@ echo "# flux-lint cases"
 mkdir "$work/lint" && cd "$work/lint"
 yq -o json "$root/tests/lint/cases.yaml" > cases.json
 jq -L "$lib" -L "$root/tests/lint" -c 'include "flux-lint"; include "case";
-  .[] | {name, got: [case_input | lint[] | case_line] | sort, expect: (.expect | sort)}' cases.json > results.json
+  .[] | {name,
+    got: ([case_input | lint[] | case_line] + if has("routine") then ["routine: \(case_input | routine)"] else [] end | sort),
+    expect: (.expect + if has("routine") then ["routine: \(.routine)"] else [] end | sort)}' cases.json > results.json
 while read -r result; do
   name=$(jq -r .name <<< "$result")
   if jq -e '.got == .expect' <<< "$result" > /dev/null; then
@@ -259,6 +261,27 @@ check "keeps a warning per cluster" bash -c \
   'grep -q "| \`Kustomization flux-system/apps (staging)\` |" comment.md && grep -q "| \`Kustomization flux-system/apps (prod)\` |" comment.md'
 LINT=false "$lib/flux-diff-comment.sh" lint.json 2> annotations.txt
 check "turns the warnings off" bash -c '! grep -q CAUTION comment.md && [[ ! -s annotations.txt ]]'
+# The routine label: which changes are routine is in the cases above
+jq -n -L "$root/tests/lint" 'include "case"; {changes: [
+    {kind: "Deployment", old: {spec: {template: {spec: {containers: [{image: "a:1"}]}}}}, new: {spec: {template: {spec: {containers: [{image: "a:2"}]}}}}},
+    {kind: "Deployment", name: "chart", parent: "HelmRelease/chart",
+      old: {spec: {template: {spec: {containers: [{image: "c:1"}]}}}}, new: {spec: {template: {spec: {containers: [{image: "c:2"}]}}}}}
+  ] | map(case_change | del(.cluster)), suppressed: []}' > routine.json
+"$lib/flux-diff-comment.sh" routine.json 2> /dev/null
+check "labels a routine update and names the kinds not compared" grep -qxF \
+  '> **Routine update**: every rendered change only bumps an image or a version. Not compared: `Secret`, `CustomResourceDefinition` in HelmReleases, `Secret` in Kustomizations.' comment.md
+HR_SKIP_KINDS='' SKIP_KINDS='' "$lib/flux-diff-comment.sh" routine.json 2> /dev/null
+check "leaves out the kinds sentence when every kind is compared" \
+  grep -qxF '> **Routine update**: every rendered change only bumps an image or a version.' comment.md
+jq '.changes |= map(select(.parent.kind == "Kustomization"))' routine.json > routine-ks.json
+"$lib/flux-diff-comment.sh" routine-ks.json 2> /dev/null
+check "names only the kinds of the producers that changed" grep -qxF \
+  '> **Routine update**: every rendered change only bumps an image or a version. Not compared: `Secret` in Kustomizations.' comment.md
+check "does not label an incomplete render routine" bash -c \
+  'PARTIAL=true "$1" routine.json 2> /dev/null && ! grep -q "Routine update" comment.md &&
+  KS_MODE=none "$1" routine.json 2> /dev/null && ! grep -q "Routine update" comment.md &&
+  jq ".suppressed = [{parent: {kind: \"HelmRelease\", name: \"a\"}, side: \"current\", count: 1, reason: \"x\"}]" routine.json > suppressed.json &&
+  "$1" suppressed.json 2> /dev/null && ! grep -q "Routine update" comment.md' _ "$lib/flux-diff-comment.sh"
 
 # kustomization-prune.sh: flate only runs when a Kustomization removes an object
 cat > "$work/bin/flate" << 'EOF2'
