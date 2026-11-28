@@ -20,6 +20,7 @@ Every input of every action, with its default. Back to the [README](../README.md
 | `helmrelease-skip-kinds` | `Secret,CustomResourceDefinition` | Comma-separated kinds left out of the HelmRelease diff; keep only `Secret` to review the CRDs a chart ships, see [Charts using CRDs](flux-diff.md#charts-using-crds) |
 | `allow-missing-kinds` | empty | Comma-separated kinds (`Secret`, `ConfigMap`, `CustomResourceDefinition`) the render may do without, with a warning, see [Objects that only exist in the cluster](sops.md#objects-that-only-exist-in-the-cluster) |
 | `comment-when-unchanged` | `true` | Post a short comment when nothing renders differently; `false` only refreshes an existing comment |
+| `lint` | `true` | Warn about changes that will fail the reconciliation, such as an immutable field updated; `false` to turn it off, see [Flux diff](flux-diff.md#changes-that-fail-the-reconciliation) |
 | `max-chars` | `60000` | Size above which a section is replaced by a link to the run summary |
 | `token`, `author` | workflow token, `github-actions[bot]` | Identity that writes the comment |
 

@@ -162,6 +162,65 @@ rm -f noop
 MAX_CHARS=1500 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "links the run summary for a section over MAX_CHARS" bash -c 'grep -q "^- \`flux-system/gateway-api-crds\`: diff too long for a comment, see the \[run summary\](https://example.com/run)\.$" comment.md && grep -q "httproutes" comment-full.md'
 
+echo "# flux-diff lint"
+mkdir "$work/lint" && cd "$work/lint"
+# One change per [kind, name, old, new], null for an added or removed object, all under
+# the Kustomization apps; sts() and pvc() merge their argument into a base spec
+jq -n '
+  def sts($s): {spec: ({replicas: 1, serviceName: "db", template: {spec: {containers: [{image: "pg:1"}]}},
+    volumeClaimTemplates: [{spec: {resources: {requests: {storage: "1Gi"}}}}]} + $s)};
+  def pvc($s): {spec: ({storageClassName: "fast", resources: {requests: {storage: "10Gi"}}} + $s)};
+  {changes: [
+    ["StatefulSet", "vct", sts({}), sts({volumeClaimTemplates: [{spec: {resources: {requests: {storage: "2Gi"}}}}]})],
+    ["StatefulSet", "rollout", sts({}), sts({replicas: 3, template: {spec: {containers: [{image: "pg:2"}]}}})],
+    ["StatefulSet", "added", null, sts({serviceName: "other"})],
+    ["Deployment", "selector", {spec: {selector: {matchLabels: {app: "a"}}}}, {spec: {selector: {matchLabels: {app: "b"}}}}],
+    ["Deployment", "image", {spec: {template: {spec: {containers: [{image: "a:1"}]}}}}, {spec: {template: {spec: {containers: [{image: "a:2"}]}}}}],
+    ["Job", "migrate", {spec: {template: {spec: {containers: [{image: "m:1"}]}}}}, {spec: {template: {spec: {containers: [{image: "m:2"}]}}}}],
+    ["Job", "hook", {metadata: {annotations: {"helm.sh/hook": "pre-upgrade"}}, spec: {template: {spec: {containers: [{image: "h:1"}]}}}},
+      {metadata: {annotations: {"helm.sh/hook": "pre-upgrade"}}, spec: {template: {spec: {containers: [{image: "h:2"}]}}}}],
+    ["Job", "forced", {spec: {template: {spec: {containers: [{image: "f:1"}]}}}},
+      {metadata: {annotations: {"kustomize.toolkit.fluxcd.io/force": "enabled"}}, spec: {template: {spec: {containers: [{image: "f:2"}]}}}}],
+    ["PersistentVolumeClaim", "shrink", pvc({resources: {requests: {storage: "10240Mi"}}}),
+      pvc({resources: {requests: {storage: "9Gi"}}, volumeName: "pv-1"})],
+    ["PersistentVolumeClaim", "grow", pvc({}), pvc({resources: {requests: {storage: "20Gi"}}})],
+    ["PersistentVolumeClaim", "class", pvc({}), pvc({storageClassName: "slow"})],
+    ["PersistentVolumeClaim", "odd", pvc({resources: {requests: {storage: "lots"}}}), pvc({resources: {requests: {storage: "1Gi"}}})],
+    ["RoleBinding", "rb", {roleRef: {kind: "Role", name: "view"}}, {roleRef: {kind: "ClusterRole", name: "admin"}}],
+    ["Service", "allocated", {spec: {}}, {spec: {clusterIP: "10.0.0.1"}}],
+    ["Service", "pinned", {spec: {clusterIP: "10.0.0.1"}}, {spec: {clusterIP: "10.0.0.2"}}]
+  ] | map({parent: {kind: "Kustomization", namespace: "flux-system", name: "apps"}, kind: .[0], namespace: "apps", name: .[1],
+      status: (if .[2] == null then "added" elif .[3] == null then "removed" else "changed" end),
+      old: .[2], new: .[3]}), suppressed: []}' > lint.json
+HEAD_SHA=abcdef0123456 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" lint.json 2> annotations.txt
+row() { grep -q "^| \`$1\` | \`Kustomization flux-system/apps\` | \`$2\` | $3 |$" comment.md; }
+export -f row
+check "flags a StatefulSet volumeClaimTemplates change" row 'StatefulSet apps/vct' immutable-field '`spec.volumeClaimTemplates` changed'
+check "flags a Deployment selector change" row 'Deployment apps/selector' immutable-field '`spec.selector` changed'
+check "flags a Job template change" row 'Job apps/migrate' immutable-field '`spec.template` changed'
+check "says when Flux force recreates the object" row 'Job apps/forced' immutable-field '`spec.template` changed (Flux `force` enabled: recreated)'
+check "flags a PVC storage request lowered, across units" \
+  row 'PersistentVolumeClaim apps/shrink' pvc-shrink 'storage request `10240Mi` → `9Gi`: a PersistentVolumeClaim can only grow'
+check "flags the immutable fields of a PVC spec" row 'PersistentVolumeClaim apps/shrink' immutable-field '`spec.volumeName` changed'
+check "flags a PVC storageClassName change" row 'PersistentVolumeClaim apps/class' immutable-field '`spec.storageClassName` changed'
+check "flags a roleRef change" row 'RoleBinding apps/rb' immutable-field '`roleRef` changed'
+check "flags a pinned clusterIP change" row 'Service apps/pinned' immutable-field '`spec.clusterIP` changed'
+check "leaves mutable and allocated fields, hooks and added objects alone" bash -c \
+  '! grep -Eq "apps/(rollout|added|image|hook|grow|allocated|odd)\`" comment.md'
+check "explains each rule found" bash -c \
+  '[[ $(grep -c "^- \`immutable-field\`: the API server refuses" comment.md) == 1 ]] && grep -q "^- \`pvc-shrink\`: " comment.md'
+check "annotates the run with every warning" bash -c \
+  '[[ $(grep -c "^::warning title=" annotations.txt) == 9 ]] && grep -q "^::warning title=pvc-shrink::PersistentVolumeClaim apps/shrink (Kustomization flux-system/apps): " annotations.txt'
+MAX_LINT=2 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
+check "caps the warnings and links the rest" bash -c \
+  '[[ $(grep -c "^| \`.*\` | \`Kustomization flux-system/apps\` | \`" comment.md) == 2 ]] && grep -q "^_7 more in the \[run logs\](https://example.com/run)\._$" comment.md'
+# The pull request diff shows the edited manifest, so the Kustomization is only counted
+KS_MODE=none "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
+check "warns about a Kustomization the comment leaves out" bash -c \
+  '[[ ! -f noop ]] && grep -q "^> \[!CAUTION\]$" comment.md && grep -q "apps/vct" comment.md && ! grep -q "^--- StatefulSet" comment.md'
+LINT=false "$lib/flux-diff-comment.sh" lint.json 2> annotations.txt
+check "turns the warnings off" bash -c '! grep -q CAUTION comment.md && [[ ! -s annotations.txt ]]'
+
 echo "# Kustomization scope"
 mkdir "$work/scope" && cd "$work/scope"
 git init -q -b main pr

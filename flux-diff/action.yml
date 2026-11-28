@@ -38,6 +38,11 @@ inputs:
       Post a comment saying so when nothing renders differently, "false" to only refresh
       an existing comment and stay silent otherwise (any other value posts it)
     default: "true"
+  lint:
+    description: >-
+      Warn, at the top of the comment and as annotations, about changes that will fail the
+      reconciliation, such as an immutable field updated; "false" to turn it off
+    default: "true"
   max-chars:
     description: Size above which a section is replaced by a link to the run summary
     default: "60000"
@@ -97,6 +102,7 @@ runs:
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         PARTIAL: ${{ steps.diff.outputs.partial || steps.diff.outputs.ks-partial }}
         KS_MODE: ${{ inputs.kustomizations }}
+        LINT: ${{ inputs.lint }}
         MAX_CHARS: ${{ inputs.max-chars }}
         MARKER: ${{ inputs.marker }}
         COMMENT_AUTHOR: ${{ inputs.author }}

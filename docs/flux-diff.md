@@ -60,6 +60,30 @@ In the sections listed:
   out, their effect is in its rendered diff. The HelmRelease object itself stays, for
   changes no render shows, such as `interval` or `driftDetection`.
 
+## Changes that fail the reconciliation
+
+Some changes read like any other diff but cannot be applied: the API server refuses them,
+and the reconciliation fails until the object is deleted and recreated. They are listed
+at the top of the comment, and as annotations on the run:
+
+| Rule | Change |
+|---|---|
+| `immutable-field` | A StatefulSet `spec` field other than `replicas`, `template`, `updateStrategy`, `persistentVolumeClaimRetentionPolicy`, `minReadySeconds` and `ordinals`, such as `volumeClaimTemplates` |
+| | The `selector` of a Deployment, DaemonSet or ReplicaSet |
+| | The `selector` or `template` of a Job, except a Helm hook, which Helm recreates |
+| | A PersistentVolumeClaim `spec` field other than `resources` and `volumeAttributesClassName`, such as `storageClassName` |
+| | The `roleRef` of a RoleBinding or ClusterRoleBinding |
+| | The `clusterIP` of a Service, when both sides set one |
+| `pvc-shrink` | A lower storage request on a PersistentVolumeClaim |
+
+Every change is checked, including those of the Kustomizations the comment leaves out.
+An object with the `kustomize.toolkit.fluxcd.io/force: enabled` annotation is still
+listed, with a note that Flux recreates it. Set `lint: false` to turn the warnings off.
+
+The Kustomization-wide `spec.force` is not read. Labels that flate leaves out of the
+diff, such as `helm.sh/chart` in `volumeClaimTemplates`, are not compared either: a
+chart bump that only changes them there is not flagged.
+
 ## Flux sources
 
 - A source that a Kustomization reads and that nothing in the repository declares or
