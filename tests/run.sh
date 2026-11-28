@@ -387,7 +387,7 @@ check "annotates the run with every removal warning" bash -c '[[ $(grep -c "^::w
 KS_PRUNE=kustomizations.json REMOVAL_KINDS=$' Secret,\n ConfigMap\n' "$lib/flux-diff-comment.sh" removals.json 2> /dev/null
 check "warns about the kinds removal-kinds lists" bash -c \
   'row "ConfigMap apps/cm" "Kustomization flux-system/apps" removed "deleted on merge" && ! grep -q "apps/data\`" comment.md && grep -q "\`not-pruned\`" comment.md'
-KS_PRUNE=kustomizations.json REMOVAL_KINDS= "$lib/flux-diff-comment.sh" removals.json 2> /dev/null
+KS_PRUNE=kustomizations.json REMOVAL_KINDS='' "$lib/flux-diff-comment.sh" removals.json 2> /dev/null
 check "still reports objects left behind with an empty removal-kinds" bash -c '! grep -q "\`removed\`" comment.md && grep -q "\`not-pruned\`" comment.md'
 # kustomization-prune.sh: flate only runs when a Kustomization removes an object
 cat > "$work/bin/flate" << 'EOF2'
