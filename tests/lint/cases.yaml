@@ -1,0 +1,401 @@
+# Cases of lib/flux-lint.jq: each gives the changes of `flate diff -o json` and the
+# complete list of warnings expected, as `rule resource (parent): detail`; [] for none.
+# `refs` name the rows of SEMANTICS.md the case checks. tests/run.sh fills the rest of
+# each change (case.jq): name x, namespace apps, parent Kustomization/apps, apiVersion
+# by kind, status from old and new. `prune` lists the Kustomizations kustomization-prune.sh
+# would print, `removal_kinds` replaces the default kinds.
+
+# Immutable fields
+
+- name: a StatefulSet volumeClaimTemplates change fails
+  refs: [K1]
+  changes:
+    - {kind: StatefulSet, old: {spec: {volumeClaimTemplates: [{spec: {resources: {requests: {storage: 1Gi}}}}]}},
+       new: {spec: {volumeClaimTemplates: [{spec: {resources: {requests: {storage: 2Gi}}}}]}}}
+  expect:
+    - 'immutable-field StatefulSet apps/x (Kustomization flux-system/apps): `spec.volumeClaimTemplates` changed'
+
+- name: StatefulSet fields outside the mutable ones are listed together
+  refs: [K1]
+  changes:
+    - {kind: StatefulSet, old: {spec: {serviceName: a, podManagementPolicy: OrderedReady}},
+       new: {spec: {serviceName: b, podManagementPolicy: Parallel}}}
+  expect:
+    - 'immutable-field StatefulSet apps/x (Kustomization flux-system/apps): `spec.podManagementPolicy`, `spec.serviceName` changed'
+
+- name: the mutable StatefulSet fields pass
+  refs: [K1]
+  changes:
+    - {kind: StatefulSet,
+       old: {spec: {replicas: 1, template: {spec: {containers: [{image: pg:1}]}}}},
+       new: {spec: {replicas: 3, ordinals: {start: 1}, revisionHistoryLimit: 5, minReadySeconds: 10,
+         updateStrategy: {type: OnDelete}, persistentVolumeClaimRetentionPolicy: {whenScaled: Delete},
+         template: {spec: {containers: [{image: pg:2}]}}}}}
+  expect: []
+
+- name: a custom resource reusing the StatefulSet kind is not checked
+  refs: [K1]
+  changes:
+    - {kind: StatefulSet, apiVersion: apps.kruise.io/v1beta1, old: {spec: {serviceName: a}}, new: {spec: {serviceName: b}}}
+  expect: []
+
+- name: an added StatefulSet is not checked
+  refs: [K1]
+  changes:
+    - {kind: StatefulSet, new: {spec: {serviceName: b}}}
+  expect: []
+
+- name: a workload selector change fails
+  refs: [K2]
+  changes:
+    - {kind: Deployment, name: d, old: {spec: {selector: {matchLabels: {app: a}}}}, new: {spec: {selector: {matchLabels: {app: b}}}}}
+    - {kind: DaemonSet, name: ds, old: {spec: {selector: {matchLabels: {app: a}}}}, new: {spec: {selector: {matchLabels: {app: b}}}}}
+    - {kind: ReplicaSet, name: rs, old: {spec: {selector: {matchLabels: {app: a}}}}, new: {spec: {selector: {matchLabels: {app: b}}}}}
+  expect:
+    - 'immutable-field DaemonSet apps/ds (Kustomization flux-system/apps): `spec.selector` changed'
+    - 'immutable-field Deployment apps/d (Kustomization flux-system/apps): `spec.selector` changed'
+    - 'immutable-field ReplicaSet apps/rs (Kustomization flux-system/apps): `spec.selector` changed'
+
+- name: a Deployment template change passes
+  refs: [K2]
+  changes:
+    - {kind: Deployment, old: {spec: {template: {spec: {containers: [{image: a:1}]}}}}, new: {spec: {template: {spec: {containers: [{image: a:2}]}}}}}
+  expect: []
+
+- name: a Job template change fails
+  refs: [K3]
+  changes:
+    - {kind: Job, old: {spec: {template: {spec: {containers: [{image: m:1}]}}}}, new: {spec: {template: {spec: {containers: [{image: m:2}]}}}}}
+  expect:
+    - 'immutable-field Job apps/x (Kustomization flux-system/apps): `spec.template` changed'
+
+- name: other Job fields are immutable, the template of a suspended Job is not
+  refs: [K3]
+  changes:
+    - {kind: Job, name: mode, old: {spec: {completionMode: NonIndexed}}, new: {spec: {completionMode: Indexed}}}
+    - {kind: Job, name: completions, old: {spec: {completions: 3}}, new: {spec: {completions: 4}}}
+    - {kind: Job, name: indexed, old: {spec: {completionMode: Indexed, completions: 3, parallelism: 3}},
+       new: {spec: {completionMode: Indexed, completions: 4, parallelism: 4}}}
+    - {kind: Job, name: suspended, old: {spec: {suspend: true, template: {spec: {containers: [{image: s:1}]}}}},
+       new: {spec: {suspend: false, template: {spec: {containers: [{image: s:2}]}}}}}
+  expect:
+    - 'immutable-field Job apps/completions (Kustomization flux-system/apps): `spec.completions` changed'
+    - 'immutable-field Job apps/mode (Kustomization flux-system/apps): `spec.completionMode` changed'
+
+- name: a hook Helm does not delete first fails like any Job
+  refs: [H4, K3]
+  changes:
+    - {kind: Job, name: kept-hook, parent: HelmRelease/chart,
+       old: {metadata: {annotations: {helm.sh/hook: pre-upgrade, helm.sh/hook-delete-policy: hook-failed}}, spec: {template: {spec: {containers: [{image: h:1}]}}}},
+       new: {metadata: {annotations: {helm.sh/hook: pre-upgrade, helm.sh/hook-delete-policy: hook-failed}}, spec: {template: {spec: {containers: [{image: h:2}]}}}}}
+    - {kind: Job, name: not-helm,
+       old: {metadata: {annotations: {helm.sh/hook: pre-upgrade}}, spec: {template: {spec: {containers: [{image: h:1}]}}}},
+       new: {metadata: {annotations: {helm.sh/hook: pre-upgrade}}, spec: {template: {spec: {containers: [{image: h:2}]}}}}}
+    - {kind: Job, name: succeeded, parent: HelmRelease/chart,
+       old: {metadata: {annotations: {helm.sh/hook: post-install, helm.sh/hook-delete-policy: 'hook-failed, hook-succeeded'}}, spec: {template: {spec: {containers: [{image: h:1}]}}}},
+       new: {metadata: {annotations: {helm.sh/hook: post-install, helm.sh/hook-delete-policy: 'hook-failed, hook-succeeded'}}, spec: {template: {spec: {containers: [{image: h:2}]}}}}}
+  expect:
+    - 'immutable-field Job apps/kept-hook (HelmRelease flux-system/chart): `spec.template` changed'
+    - 'immutable-field Job apps/not-helm (Kustomization flux-system/apps): `spec.template` changed'
+
+- name: Helm recreates its hook Jobs
+  refs: [H4]
+  changes:
+    - {kind: Job, parent: HelmRelease/chart,
+       old: {metadata: {annotations: {helm.sh/hook: pre-upgrade}}, spec: {template: {spec: {containers: [{image: h:1}]}}}},
+       new: {metadata: {annotations: {helm.sh/hook: pre-upgrade}}, spec: {template: {spec: {containers: [{image: h:2}]}}}}}
+  expect: []
+
+- name: the TTL of the Job in the cluster lets Flux create the new one later
+  refs: [K3, K9]
+  changes:
+    - {kind: Job, name: kept, old: {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: t:1}]}}}},
+       new: {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: t:2}]}}}}}
+    - {kind: Job, name: dropped, old: {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: t:1}]}}}},
+       new: {spec: {template: {spec: {containers: [{image: t:2}]}}}}}
+    - {kind: Job, name: added, old: {spec: {template: {spec: {containers: [{image: t:1}]}}}},
+       new: {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: t:2}]}}}}}
+  expect:
+    - 'immutable-field Job apps/added (Kustomization flux-system/apps): `spec.template` changed'
+    - 'immutable-field Job apps/dropped (Kustomization flux-system/apps): `spec.template` changed (`ttlSecondsAfterFinished` set: fails until the previous Job finishes and its TTL expires)'
+    - 'immutable-field Job apps/kept (Kustomization flux-system/apps): `spec.template` changed (`ttlSecondsAfterFinished` set: fails until the previous Job finishes and its TTL expires)'
+
+- name: Flux force recreates an object under a Kustomization
+  refs: [F1]
+  changes:
+    - {kind: Job, old: {spec: {template: {spec: {containers: [{image: f:1}]}}}},
+       new: {metadata: {annotations: {kustomize.toolkit.fluxcd.io/force: enabled}}, spec: {template: {spec: {containers: [{image: f:2}]}}}}}
+  expect:
+    - 'immutable-field Job apps/x (Kustomization flux-system/apps): `spec.template` changed (Flux `force` enabled: recreated)'
+
+- name: Flux force is read as a label or an annotation, on either side, in any case
+  refs: [F1]
+  changes:
+    - {kind: Job, name: label, old: {metadata: {labels: {kustomize.toolkit.fluxcd.io/force: Enabled}}, spec: {template: {spec: {containers: [{image: f:1}]}}}},
+       new: {spec: {template: {spec: {containers: [{image: f:2}]}}}}}
+  expect:
+    - 'immutable-field Job apps/label (Kustomization flux-system/apps): `spec.template` changed (Flux `force` enabled: recreated)'
+
+- name: recreating a StatefulSet with whenDeleted Delete deletes its claims
+  refs: [F1, K8]
+  changes:
+    - {kind: StatefulSet, old: {spec: {serviceName: a}},
+       new: {metadata: {annotations: {kustomize.toolkit.fluxcd.io/force: enabled}},
+         spec: {serviceName: b, persistentVolumeClaimRetentionPolicy: {whenDeleted: Delete}}}}
+  expect:
+    - 'immutable-field StatefulSet apps/x (Kustomization flux-system/apps): `spec.serviceName` changed (Flux `force` enabled: recreating it deletes its PersistentVolumeClaims, `whenDeleted: Delete`)'
+
+- name: helm-controller ignores the Flux force annotation
+  refs: [F2, K5]
+  changes:
+    - {kind: PersistentVolumeClaim, parent: HelmRelease/chart, old: {spec: {resources: {requests: {storage: 10Gi}}}},
+       new: {metadata: {annotations: {kustomize.toolkit.fluxcd.io/force: enabled}}, spec: {resources: {requests: {storage: 5Gi}}}}}
+  expect:
+    - 'pvc-shrink PersistentVolumeClaim apps/x (HelmRelease flux-system/chart): storage request `10Gi` → `5Gi`: a PersistentVolumeClaim can only grow'
+
+- name: a PVC spec change fails, except the storage request and the attributes class
+  refs: [K4]
+  changes:
+    - {kind: PersistentVolumeClaim, name: class, old: {spec: {storageClassName: fast}}, new: {spec: {storageClassName: slow}}}
+    - {kind: PersistentVolumeClaim, name: grow, old: {spec: {resources: {requests: {storage: 10Gi}}}}, new: {spec: {resources: {requests: {storage: 20Gi}}}}}
+    - {kind: PersistentVolumeClaim, name: vac, old: {spec: {volumeAttributesClassName: a}}, new: {spec: {volumeAttributesClassName: b}}}
+  expect:
+    - 'immutable-field PersistentVolumeClaim apps/class (Kustomization flux-system/apps): `spec.storageClassName` changed'
+
+- name: only the storage request may change among the PVC resources
+  refs: [K4]
+  changes:
+    - {kind: PersistentVolumeClaim, name: limits, old: {spec: {resources: {requests: {storage: 1Gi}, limits: {storage: 2Gi}}}},
+       new: {spec: {resources: {requests: {storage: 1Gi}, limits: {storage: 4Gi}}}}}
+    - {kind: PersistentVolumeClaim, name: other-request, old: {spec: {resources: {requests: {storage: 1Gi}}}},
+       new: {spec: {resources: {requests: {storage: 1Gi, example.com/iops: '100'}}}}}
+    - {kind: PersistentVolumeClaim, name: storage-only, old: {spec: {resources: {requests: {storage: 1Gi}}}}, new: {spec: {}}}
+  expect:
+    - 'immutable-field PersistentVolumeClaim apps/limits (Kustomization flux-system/apps): `spec.resources.limits` changed'
+    - 'immutable-field PersistentVolumeClaim apps/other-request (Kustomization flux-system/apps): `spec.resources.requests` changed'
+
+- name: a PVC may be bound once, not rebound
+  refs: [K4]
+  changes:
+    - {kind: PersistentVolumeClaim, name: bind, old: {spec: {}}, new: {spec: {volumeName: pv-1}}}
+    - {kind: PersistentVolumeClaim, name: rebind, old: {spec: {volumeName: pv-1}}, new: {spec: {volumeName: pv-2}}}
+  expect:
+    - 'immutable-field PersistentVolumeClaim apps/rebind (Kustomization flux-system/apps): `spec.volumeName` changed'
+
+- name: a lower storage request fails, across units, along with another field
+  refs: [K4, K5]
+  changes:
+    - {kind: PersistentVolumeClaim, old: {spec: {resources: {requests: {storage: 10240Mi}}}},
+       new: {spec: {volumeMode: Block, resources: {requests: {storage: 9Gi}}}}}
+  expect:
+    - 'immutable-field PersistentVolumeClaim apps/x (Kustomization flux-system/apps): `spec.volumeMode` changed'
+    - 'pvc-shrink PersistentVolumeClaim apps/x (Kustomization flux-system/apps): storage request `10240Mi` → `9Gi`: a PersistentVolumeClaim can only grow'
+
+- name: a storage request that does not parse is not compared
+  refs: [K5]
+  changes:
+    - {kind: PersistentVolumeClaim, old: {spec: {resources: {requests: {storage: lots}}}}, new: {spec: {resources: {requests: {storage: 1Gi}}}}}
+  expect: []
+
+- name: recreating a PVC with Flux force can delete its data
+  refs: [F1, K4]
+  changes:
+    - {kind: PersistentVolumeClaim, old: {spec: {storageClassName: fast}},
+       new: {metadata: {annotations: {kustomize.toolkit.fluxcd.io/force: enabled}}, spec: {storageClassName: slow}}}
+  expect:
+    - 'immutable-field PersistentVolumeClaim apps/x (Kustomization flux-system/apps): `spec.storageClassName` changed (Flux `force` enabled: recreating the claim can delete its data)'
+
+- name: a roleRef change fails
+  refs: [K6]
+  changes:
+    - {kind: RoleBinding, old: {roleRef: {kind: Role, name: view}}, new: {roleRef: {kind: ClusterRole, name: admin}}}
+    - {kind: ClusterRoleBinding, name: crb, old: {roleRef: {kind: ClusterRole, name: view}}, new: {roleRef: {kind: ClusterRole, name: admin}}}
+  expect:
+    - 'immutable-field ClusterRoleBinding crb (Kustomization flux-system/apps): `roleRef` changed'
+    - 'immutable-field RoleBinding apps/x (Kustomization flux-system/apps): `roleRef` changed'
+
+- name: only a set clusterIP changed to another one fails
+  refs: [K7]
+  changes:
+    - {kind: Service, name: allocated, old: {spec: {}}, new: {spec: {clusterIP: 10.0.0.1}}}
+    - {kind: Service, name: pinned, old: {spec: {clusterIP: 10.0.0.1}}, new: {spec: {clusterIP: 10.0.0.2}}}
+    - {kind: Service, name: external, old: {spec: {clusterIP: 10.0.0.1}}, new: {spec: {type: ExternalName, clusterIP: 10.0.0.2}}}
+  expect:
+    - 'immutable-field Service apps/pinned (Kustomization flux-system/apps): `spec.clusterIP` changed'
+
+- name: a warning names the cluster flate reports
+  refs: [K2]
+  changes:
+    - {kind: Deployment, cluster: prod, old: {spec: {selector: {matchLabels: {app: a}}}}, new: {spec: {selector: {matchLabels: {app: b}}}}}
+  expect:
+    - 'immutable-field Deployment apps/x (Kustomization flux-system/apps (prod)): `spec.selector` changed'
+
+# Removed objects
+
+- name: a pruning Kustomization deletes a removed PVC
+  refs: [F4, K4]
+  prune: {apps: true}
+  changes:
+    - {kind: PersistentVolumeClaim, old: {}}
+  expect:
+    - 'removed PersistentVolumeClaim apps/x (Kustomization flux-system/apps): deleted on merge: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
+
+- name: a deleted StatefulSet takes its claims only with whenDeleted Delete
+  refs: [F4, K8]
+  prune: {apps: true}
+  changes:
+    - {kind: StatefulSet, name: retain, old: {}}
+    - {kind: StatefulSet, name: owned, old: {spec: {persistentVolumeClaimRetentionPolicy: {whenDeleted: Delete}}}}
+  expect:
+    - 'removed StatefulSet apps/owned (Kustomization flux-system/apps): deleted on merge: its PersistentVolumeClaims go with it, `whenDeleted: Delete`, which can delete their data'
+    - 'removed StatefulSet apps/retain (Kustomization flux-system/apps): deleted on merge: its pods stop, its PersistentVolumeClaims stay'
+
+- name: deleting a Namespace or a CRD deletes what it holds
+  refs: [F4, K10]
+  prune: {apps: true}
+  changes:
+    - {kind: Namespace, name: team, old: {}}
+    - {kind: CustomResourceDefinition, name: widgets.example.com, old: {spec: {names: {kind: Widget}}}}
+  expect:
+    - 'removed CustomResourceDefinition widgets.example.com (Kustomization flux-system/apps): deleted on merge: deleting the definition deletes every `Widget` in the cluster'
+    - 'removed Namespace team (Kustomization flux-system/apps): deleted on merge: deleting the namespace deletes every object in it'
+
+- name: Helm deletes what the chart no longer renders, except the CRDs of crds/
+  refs: [H1, H3]
+  changes:
+    - {kind: CustomResourceDefinition, name: widgets.example.com, parent: HelmRelease/chart, old: {spec: {names: {kind: Widget}}}}
+    - {kind: NetworkPolicy, parent: HelmRelease/chart, old: {}}
+  expect:
+    - 'removed CustomResourceDefinition widgets.example.com (HelmRelease flux-system/chart): deleted on merge: deleting the definition deletes every `Widget` in the cluster, unless the chart ships it in `crds/`, which Helm never deletes'
+    - 'removed NetworkPolicy apps/x (HelmRelease flux-system/chart): deleted on merge: traffic it denied can then be allowed'
+
+- name: other kinds and other API groups are not flagged when deleted
+  refs: [F4]
+  prune: {apps: true}
+  changes:
+    - {kind: ConfigMap, old: {}}
+    - {kind: StatefulSet, apiVersion: apps.kruise.io/v1beta1, old: {}}
+  expect: []
+
+- name: removal_kinds replaces the kinds flagged
+  refs: [F4]
+  prune: {apps: true}
+  removal_kinds: [ConfigMap]
+  changes:
+    - {kind: ConfigMap, name: cm, old: {}}
+    - {kind: PersistentVolumeClaim, name: data, old: {}}
+  expect:
+    - 'removed ConfigMap apps/cm (Kustomization flux-system/apps): deleted on merge'
+
+- name: annotations keep an object Flux or Helm would delete
+  refs: [F3, H2]
+  prune: {apps: true}
+  changes:
+    - {kind: PersistentVolumeClaim, name: ks, old: {metadata: {annotations: {kustomize.toolkit.fluxcd.io/prune: disabled}}}}
+    - {kind: PersistentVolumeClaim, name: helm, parent: HelmRelease/chart, old: {metadata: {annotations: {helm.sh/resource-policy: keep}}}}
+  expect: []
+
+- name: Flux reads the exclusions on the object in the cluster
+  refs: [F3]
+  prune: {apps: true}
+  changes:
+    - {kind: PersistentVolumeClaim, name: reconcile, old: {metadata: {labels: {kustomize.toolkit.fluxcd.io/reconcile: disabled}}}}
+    - {kind: PersistentVolumeClaim, name: ssa, old: {metadata: {annotations: {kustomize.toolkit.fluxcd.io/ssa: ignore}}}}
+  expect: []
+
+- name: a Kustomization that does not prune leaves its objects, one warning per Kustomization
+  refs: [F4]
+  prune: {legacy: false, single: false}
+  changes:
+    - {kind: ConfigMap, name: a, parent: Kustomization/legacy, old: {}}
+    - {kind: ConfigMap, name: b, parent: Kustomization/legacy, old: {}}
+    - {kind: PersistentVolumeClaim, name: c, parent: Kustomization/legacy, old: {}}
+    - {kind: PersistentVolumeClaim, name: lone, parent: Kustomization/single, old: {}}
+  expect:
+    - 'not-pruned 3 objects (Kustomization flux-system/legacy): removed from git but left in the cluster, where nothing manages them any more'
+    - 'not-pruned PersistentVolumeClaim apps/lone (Kustomization flux-system/single): removed from git but left in the cluster, where nothing manages it any more'
+
+- name: the prune setting of a Kustomization the pull request changes is read from it
+  refs: [F4]
+  changes:
+    - {kind: ConfigMap, parent: Kustomization/flipped, old: {}}
+    - {kind: Kustomization, name: flipped, parent: Kustomization/flux-system, old: {spec: {prune: true}}, new: {spec: {prune: false}}}
+  expect:
+    - 'not-pruned ConfigMap apps/x (Kustomization flux-system/flipped): removed from git but left in the cluster, where nothing manages it any more'
+
+- name: an unknown prune setting hedges the warning
+  refs: [F4]
+  changes:
+    - {kind: PersistentVolumeClaim, parent: Kustomization/unlisted, old: {}}
+  expect:
+    - 'removed PersistentVolumeClaim apps/x (Kustomization flux-system/unlisted): deleted on merge if the Kustomization prunes: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
+
+- name: a Kustomization listed without a cluster matches the cluster the diff names
+  refs: [F4]
+  prune: {legacy: false}
+  changes:
+    - {kind: ConfigMap, cluster: prod, parent: Kustomization/legacy, old: {}}
+  expect:
+    - 'not-pruned ConfigMap apps/x (Kustomization flux-system/legacy (prod)): removed from git but left in the cluster, where nothing manages it any more'
+
+- name: a removed Kustomization collects its objects by its deletionPolicy, then its prune
+  refs: [F5]
+  prune: {flux-system: true}
+  changes:
+    - {kind: Kustomization, name: orphan, parent: Kustomization/flux-system, old: {spec: {prune: true, deletionPolicy: Orphan}}}
+    - {kind: PersistentVolumeClaim, name: left, parent: Kustomization/orphan, old: {}}
+    - {kind: Kustomization, name: delete, parent: Kustomization/flux-system, old: {spec: {prune: false, deletionPolicy: Delete}}}
+    - {kind: PersistentVolumeClaim, name: deleted, parent: Kustomization/delete, old: {}}
+    - {kind: Kustomization, name: mirror, parent: Kustomization/flux-system, old: {spec: {prune: true}}}
+    - {kind: PersistentVolumeClaim, name: collected, parent: Kustomization/mirror, old: {}}
+    - {kind: Kustomization, name: mirror-off, parent: Kustomization/flux-system, old: {spec: {prune: false}}}
+    - {kind: PersistentVolumeClaim, name: kept, parent: Kustomization/mirror-off, old: {}}
+  expect:
+    - 'not-pruned PersistentVolumeClaim apps/kept (Kustomization flux-system/mirror-off): removed from git but left in the cluster, where nothing manages it any more'
+    - 'not-pruned PersistentVolumeClaim apps/left (Kustomization flux-system/orphan): removed from git but left in the cluster, where nothing manages it any more'
+    - 'removed PersistentVolumeClaim apps/collected (Kustomization flux-system/mirror): deleted on merge: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
+    - 'removed PersistentVolumeClaim apps/deleted (Kustomization flux-system/delete): deleted on merge: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
+
+- name: a removed Kustomization its producer leaves in the cluster keeps its objects
+  refs: [F4]
+  prune: {flux-system: false}
+  changes:
+    - {kind: Kustomization, name: stays, parent: Kustomization/flux-system, old: {spec: {prune: true}}}
+    - {kind: PersistentVolumeClaim, parent: Kustomization/stays, old: {}}
+  expect:
+    - 'not-pruned Kustomization flux-system/stays (Kustomization flux-system/flux-system): removed from git but left in the cluster, where nothing manages it any more'
+
+- name: a removed HelmRelease uninstalls its objects, unless its producer leaves it
+  refs: [F7, F4]
+  prune: {apps: true, legacy: false}
+  changes:
+    - {kind: HelmRelease, name: dropped, old: {}}
+    - {kind: PersistentVolumeClaim, name: dropped-data, parent: HelmRelease/dropped, old: {}}
+    - {kind: HelmRelease, name: kept, parent: Kustomization/legacy, old: {}}
+    - {kind: PersistentVolumeClaim, name: kept-data, parent: HelmRelease/kept, old: {}}
+  expect:
+    - 'not-pruned HelmRelease flux-system/kept (Kustomization flux-system/legacy): removed from git but left in the cluster, where nothing manages it any more'
+    - 'removed PersistentVolumeClaim apps/dropped-data (HelmRelease flux-system/dropped): deleted on merge: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
+
+- name: a moved object can be deleted before its new producer applies it
+  refs: [F6, F8]
+  prune: {apps: true, other: true, legacy: false}
+  changes:
+    - {kind: PersistentVolumeClaim, name: moved, old: {}}
+    - {kind: PersistentVolumeClaim, name: moved, parent: Kustomization/other, new: {}}
+    - {kind: PersistentVolumeClaim, name: hedged, parent: Kustomization/unlisted, old: {}}
+    - {kind: PersistentVolumeClaim, name: hedged, parent: Kustomization/other, new: {}}
+    - {kind: ConfigMap, name: from-legacy, parent: Kustomization/legacy, old: {}}
+    - {kind: ConfigMap, name: from-legacy, parent: Kustomization/other, new: {}}
+  expect:
+    - 'removed PersistentVolumeClaim apps/hedged (Kustomization flux-system/unlisted): moves to `Kustomization flux-system/other`, deleted and recreated if `Kustomization flux-system/unlisted` reconciles first and prunes: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
+    - 'removed PersistentVolumeClaim apps/moved (Kustomization flux-system/apps): moves to `Kustomization flux-system/other`, deleted and recreated if `Kustomization flux-system/apps` reconciles first: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
+
+- name: an object replaced by one of another API group has not moved
+  refs: [F4, K1]
+  prune: {apps: true}
+  changes:
+    - {kind: StatefulSet, old: {}}
+    - {kind: StatefulSet, apiVersion: apps.kruise.io/v1beta1, new: {}}
+  expect:
+    - 'removed StatefulSet apps/x (Kustomization flux-system/apps): deleted on merge: its pods stop, its PersistentVolumeClaims stay'

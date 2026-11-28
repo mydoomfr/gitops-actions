@@ -70,10 +70,10 @@ at the top of the comment, and as annotations on the run:
 |---|---|
 | `immutable-field` | A StatefulSet `spec` field other than `replicas`, `template`, `updateStrategy`, `revisionHistoryLimit`, `persistentVolumeClaimRetentionPolicy`, `minReadySeconds` and `ordinals`, such as `volumeClaimTemplates` |
 | | The `selector` of a Deployment, DaemonSet or ReplicaSet |
-| | The `selector` or `template` of a Job, except a Helm hook, which Helm recreates |
-| | A PersistentVolumeClaim `spec` field other than `resources` and `volumeAttributesClassName`, such as `storageClassName`; a first `volumeName` binds the claim and is allowed |
+| | The `selector`, `template`, `completionMode`, `completions` and failure or success policies of a Job, except the template of a suspended Job and a Helm hook that Helm deletes before creating it again (`before-hook-creation`, the default, or `hook-succeeded`) |
+| | A PersistentVolumeClaim `spec` field other than the storage request and `volumeAttributesClassName`, such as `storageClassName` or `resources.limits`; a first `volumeName` binds the claim and is allowed |
 | | The `roleRef` of a RoleBinding or ClusterRoleBinding |
-| | The `clusterIP` of a Service, when both sides set one |
+| | The `clusterIP` of a Service, when both sides set one and neither is `ExternalName` |
 | `pvc-shrink` | A lower storage request on a PersistentVolumeClaim |
 
 The rules apply to the Kubernetes API groups only (`apps`, `batch`, core,
@@ -87,8 +87,9 @@ warns. A warning names the producer, and its cluster when flate reports one.
 
 Some warnings carry a note:
 
-- an object with the `kustomize.toolkit.fluxcd.io/force: enabled` annotation, under a
-  Kustomization, is recreated by Flux; recreating a PersistentVolumeClaim can delete its
+- an object with `kustomize.toolkit.fluxcd.io/force: enabled`, as a label or an
+  annotation, in git or on the object in the cluster, under a Kustomization, is recreated
+  by Flux; recreating a PersistentVolumeClaim can delete its
   data, and recreating a StatefulSet with `whenDeleted: Delete` deletes its claims;
 - a Job whose version in the cluster sets `ttlSecondsAfterFinished` fails until it
   finishes and its TTL expires: Flux then creates the new one.
@@ -133,8 +134,10 @@ The `prune` setting of each Kustomization is read with an extra `flate get ks`, 
 when a Kustomization removes an object; for a Kustomization it cannot list, the warning
 says the object is deleted only if the Kustomization prunes. Not flagged:
 
-- an object kept by the `kustomize.toolkit.fluxcd.io/prune: disabled` or
-  `helm.sh/resource-policy: keep` annotation;
+- an object kept by `kustomize.toolkit.fluxcd.io/prune: disabled`, `reconcile: disabled`,
+  `ssa: Ignore` or `helm.sh/resource-policy: keep`, already set on the object in the
+  cluster: Flux reads it there, so adding it in the commit that removes the object does
+  not protect it;
 - a custom resource reusing one of the default kinds, such as an OpenKruise StatefulSet;
 - a CRD a chart drops, with the default `helmrelease-skip-kinds`, which leaves CRDs out
   of the HelmRelease diff.

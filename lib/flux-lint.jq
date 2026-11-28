@@ -18,6 +18,17 @@ def changed_keys($keys): (.old.spec // {}) as $o | (.new.spec // {}) as $n
 def changed_outside($mutable): (.old.spec // {}) as $o | (.new.spec // {}) as $n
   | changed_keys([$o + $n | keys[] | select(IN($mutable[]) | not)]);
 
+# A kustomize-controller setting on one of $sides: a label or an annotation, its value
+# compared case-insensitively (SEMANTICS.md F1, F3)
+def flux_set($sides; $key; $value): any($sides[] | objects | .metadata | (.labels, .annotations) | objects
+  | .[$key] | strings; ascii_downcase == ($value | ascii_downcase));
+
+# A Helm hook that Helm deletes before creating it again: its delete policy, before-hook-
+# creation by default, or hook-succeeded once it ran (H4)
+def hook_recreated: .parent.kind == "HelmRelease" and (.new.metadata.annotations["helm.sh/hook"] | strings) != null
+  and ((.new.metadata.annotations["helm.sh/hook-delete-policy"] // "before-hook-creation") | split(",")
+    | any(.[]; gsub("\\s"; "") | IN("before-hook-creation", "hook-succeeded")));
+
 # A Kubernetes quantity in bytes, nothing when it does not parse
 def bytes: capture("^(?<n>[0-9]+(\\.[0-9]+)?)(?<u>Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$")
   | (.n | tonumber) * ({"": 1, k: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18,
@@ -28,9 +39,10 @@ def bytes: capture("^(?<n>[0-9]+(\\.[0-9]+)?)(?<u>Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)
 def immutable:
   select(.status == "changed" and (.old | type) == "object" and (.new | type) == "object")
   | is(""; ["PersistentVolumeClaim"]) as $pvc
-  # The annotation is read by kustomize-controller only: helm-controller never recreates
+  # kustomize-controller reads it on the manifest or on the object in the cluster;
+  # helm-controller never recreates (F1, F2)
   | (if .parent.kind != "Kustomization"
-      or .new.metadata.annotations["kustomize.toolkit.fluxcd.io/force"] != "enabled" then ""
+      or (flux_set([.new, .old]; "kustomize.toolkit.fluxcd.io/force"; "enabled") | not) then ""
     elif $pvc then " (Flux `force` enabled: recreating the claim can delete its data)"
     elif is("apps"; ["StatefulSet"]) and .new.spec.persistentVolumeClaimRetentionPolicy.whenDeleted == "Delete"
       then " (Flux `force` enabled: recreating it deletes its PersistentVolumeClaims, `whenDeleted: Delete`)"
@@ -40,17 +52,30 @@ def immutable:
       changed_outside(["replicas", "ordinals", "template", "updateStrategy", "revisionHistoryLimit",
         "persistentVolumeClaimRetentionPolicy", "minReadySeconds"])
     elif is("apps"; ["Deployment", "DaemonSet", "ReplicaSet"]) then changed_keys(["selector"])
-    # Helm deletes and recreates its hook Jobs
+    # The template of a suspended Job may change; completions only along with parallelism,
+    # in Indexed mode (K3). Helm deletes and recreates its hooks (H4)
     elif is("batch"; ["Job"]) then
-      if [.old, .new | .metadata.annotations["helm.sh/hook"]?] | any(. != null) then []
-      else changed_keys(["selector", "template"]) end
-    # volumeName may be set once, to bind the claim
-    elif $pvc then changed_outside(["resources", "volumeAttributesClassName"]
-      + if (.old.spec.volumeName // "") == "" then ["volumeName"] else [] end)
+      if hook_recreated then []
+      else changed_keys(["selector", "completionMode", "podFailurePolicy", "backoffLimitPerIndex", "managedBy",
+          "successPolicy"] + if .old.spec.suspend == true then [] else ["template"] end)
+        + if .old.spec.completions != .new.spec.completions
+            and (.new.spec.completionMode != "Indexed" or .new.spec.completions != .new.spec.parallelism)
+          then ["spec.completions"] else [] end
+      end
+    # Only the storage request and the attributes class may change; volumeName may be set
+    # once, to bind the claim (K4)
+    elif $pvc then
+      def other_resources: .spec.resources // {} | del(.requests.storage)
+        | if .requests == {} then del(.requests) else . end;
+      changed_outside(["resources", "volumeAttributesClassName"]
+        + if (.old.spec.volumeName // "") == "" then ["volumeName"] else [] end)
+      + ((.old | other_resources) as $o | (.new | other_resources) as $n
+        | [$o + $n | keys[] | select($o[.] != $n[.]) | "spec.resources.\(.)"])
     elif is("rbac.authorization.k8s.io"; ["RoleBinding", "ClusterRoleBinding"]) then
       if .old.roleRef != .new.roleRef then ["roleRef"] else [] end
-    # An unset clusterIP is allocated by the API server, so only two set values conflict
-    elif is(""; ["Service"]) then
+    # An unset clusterIP is allocated by the API server, so only two set values conflict;
+    # an ExternalName Service releases or allocates it (K7)
+    elif is(""; ["Service"]) and ([.old, .new | .spec.type] | index("ExternalName") | not) then
       (.old.spec.clusterIP // "") as $a | (.new.spec.clusterIP // "") as $b
       | if $a != "" and $b != "" and $a != $b then ["spec.clusterIP"] else [] end
     else [] end) as $fields
@@ -95,7 +120,10 @@ def fate($idx):
       elif $idx.hr[$k].status != "removed" then "deleted"
       else ($idx.hr[$k] | fate($idx)) | if . == "deleted" or . == "" then . else "kept" end end
     elif .parent.kind != "Kustomization" then ""
-    elif ($a["kustomize.toolkit.fluxcd.io/prune"] // "") == "disabled" then "kept"
+    # Settings read on the object in the cluster, not on the manifest that removes it (F3)
+    elif flux_set([.old]; "kustomize.toolkit.fluxcd.io/prune"; "disabled")
+      or flux_set([.old]; "kustomize.toolkit.fluxcd.io/reconcile"; "disabled")
+      or flux_set([.old]; "kustomize.toolkit.fluxcd.io/ssa"; "Ignore") then "kept"
     else $idx.ks[$k] as $obj
       | if $obj.status == "removed" then
           # Its deletion collects what it applied. Left in the cluster, it keeps applying its
