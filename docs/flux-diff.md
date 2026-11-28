@@ -97,6 +97,54 @@ The Kustomization-wide `spec.force` is not read. Labels that flate leaves out of
 diff, such as `helm.sh/chart` in `volumeClaimTemplates`, are not compared either: a
 chart bump that only changes them there is not flagged.
 
+## Removed objects
+
+An object the pull request removes reads like any other deletion in the diff, but on
+merge Flux either deletes it or leaves it behind. Both are listed with the warnings
+above:
+
+| Rule | Removal |
+|---|---|
+| `removed` | Flux deletes an object of a `removal-kinds` kind: a HelmRelease or a pruning Kustomization no longer renders it. An object moving to another producer is flagged too: whichever reconciles first wins, and the old one may delete it before the new one applies it |
+| `not-pruned` | A Kustomization that does not prune, or removed with `deletionPolicy: Orphan`, leaves the objects it no longer renders in the cluster, unmanaged: one warning per Kustomization, whatever their kind |
+
+By default, `removal-kinds` lists the kinds whose deletion takes more with it:
+
+- a `StatefulSet` stops its pods, and deletes its PersistentVolumeClaims with
+  `whenDeleted: Delete`;
+- a `PersistentVolumeClaim` can delete its data, depending on the `reclaimPolicy` of
+  its volume, which is not in git;
+- a `Namespace` deletes every object in it;
+- a `CustomResourceDefinition` deletes every custom resource of its kind, unless a chart
+  ships it in `crds/`: Helm never deletes those;
+- a `NetworkPolicy` can let through traffic it denied.
+
+Set your own list to replace it, or leave it empty to keep only the `not-pruned`
+warnings:
+
+```yaml
+- uses: mydoomfr/gitops-actions/flux-diff@<sha> # v1.4.0
+  with:
+    path: clusters/my-cluster
+    removal-kinds: StatefulSet,PersistentVolumeClaim,Namespace,Certificate
+```
+
+The `prune` setting of each Kustomization is read with an extra `flate get ks`, only
+when a Kustomization removes an object; for a Kustomization it cannot list, the warning
+says the object is deleted only if the Kustomization prunes. Not flagged:
+
+- an object kept by the `kustomize.toolkit.fluxcd.io/prune: disabled` or
+  `helm.sh/resource-policy: keep` annotation;
+- a custom resource reusing one of the default kinds, such as an OpenKruise StatefulSet;
+- a CRD a chart drops, with the default `helmrelease-skip-kinds`, which leaves CRDs out
+  of the HelmRelease diff.
+
+When a whole Kustomization or HelmRelease is removed, what happens to its objects
+depends on whether its own producer deletes it. Deleted, a Kustomization collects them
+by its `deletionPolicy` and `prune`, and a HelmRelease uninstalls them. Left in the
+cluster, it keeps them, and nothing is flagged. With `kustomizations: none`, a removed
+HelmRelease is not in the diff, and its objects are reported as deleted.
+
 ## Flux sources
 
 - A source that a Kustomization reads and that nothing in the repository declares or
