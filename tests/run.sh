@@ -192,203 +192,74 @@ rm -f noop
 MAX_CHARS=1500 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" hr.json "$fixtures/flate-diff-ks.json"
 check "links the run summary for a section over MAX_CHARS" bash -c 'grep -q "^- \`flux-system/gateway-api-crds\`: diff too long for a comment, see the \[run summary\](https://example.com/run)\.$" comment.md && grep -q "httproutes" comment-full.md'
 
-echo "# flux-diff lint"
+echo "# flux-lint cases"
+# tests/lint/cases.yaml: each case against the complete output of lint, so that a warning
+# too many fails as well as one missing
 mkdir "$work/lint" && cd "$work/lint"
-# One change per [kind, name, old, new, apiVersion?, parent kind?], null for an added or
-# removed object, under the Kustomization apps by default; sts() and pvc() merge their
-# argument into a base spec
-jq -n '
-  def sts($s): {spec: ({replicas: 1, serviceName: "db", template: {spec: {containers: [{image: "pg:1"}]}},
-    volumeClaimTemplates: [{spec: {resources: {requests: {storage: "1Gi"}}}}]} + $s)};
-  def pvc($s): {spec: ({storageClassName: "fast", resources: {requests: {storage: "10Gi"}}} + $s)};
-  def force: {metadata: {annotations: {"kustomize.toolkit.fluxcd.io/force": "enabled"}}};
-  {changes: [
-    ["StatefulSet", "vct", sts({}), sts({volumeClaimTemplates: [{spec: {resources: {requests: {storage: "2Gi"}}}}]})],
-    ["StatefulSet", "rollout", sts({}), sts({replicas: 3, revisionHistoryLimit: 5, template: {spec: {containers: [{image: "pg:2"}]}}})],
-    ["StatefulSet", "kruise", sts({}), sts({reserveOrdinals: [1]}), "apps.kruise.io/v1beta1"],
-    ["StatefulSet", "added", null, sts({serviceName: "other"})],
-    ["Deployment", "selector", {spec: {selector: {matchLabels: {app: "a"}}}}, {spec: {selector: {matchLabels: {app: "b"}}}}],
-    ["Deployment", "image", {spec: {template: {spec: {containers: [{image: "a:1"}]}}}}, {spec: {template: {spec: {containers: [{image: "a:2"}]}}}}],
-    ["Job", "migrate", {spec: {template: {spec: {containers: [{image: "m:1"}]}}}}, {spec: {template: {spec: {containers: [{image: "m:2"}]}}}}],
-    ["Job", "hook", {metadata: {annotations: {"helm.sh/hook": "pre-upgrade"}}, spec: {template: {spec: {containers: [{image: "h:1"}]}}}},
-      {metadata: {annotations: {"helm.sh/hook": "pre-upgrade"}}, spec: {template: {spec: {containers: [{image: "h:2"}]}}}}],
-    ["Job", "forced", {spec: {template: {spec: {containers: [{image: "f:1"}]}}}},
-      force + {spec: {template: {spec: {containers: [{image: "f:2"}]}}}}],
-    ["Job", "ttl", {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: "t:1"}]}}}},
-      {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: "t:2"}]}}}}],
-    ["Job", "ttl-added", {spec: {template: {spec: {containers: [{image: "t:1"}]}}}},
-      {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: "t:2"}]}}}}],
-    ["Job", "ttl-dropped", {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: "t:1"}]}}}},
-      {spec: {template: {spec: {containers: [{image: "t:2"}]}}}}],
-    ["StatefulSet", "owned", sts({}),
-      force + sts({persistentVolumeClaimRetentionPolicy: {whenDeleted: "Delete"}, serviceName: "other"})],
-    ["PersistentVolumeClaim", "shrink", pvc({resources: {requests: {storage: "10240Mi"}}}),
-      pvc({resources: {requests: {storage: "9Gi"}}, volumeMode: "Block"})],
-    ["PersistentVolumeClaim", "hr-forced", pvc({}), force + pvc({resources: {requests: {storage: "5Gi"}}}), null, "HelmRelease"],
-    ["PersistentVolumeClaim", "bind", pvc({}), pvc({volumeName: "pv-1"})],
-    ["PersistentVolumeClaim", "rebind", pvc({volumeName: "pv-1"}), pvc({volumeName: "pv-2"})],
-    ["PersistentVolumeClaim", "grow", pvc({}), pvc({resources: {requests: {storage: "20Gi"}}})],
-    ["PersistentVolumeClaim", "class", pvc({}), pvc({storageClassName: "slow"})],
-    ["PersistentVolumeClaim", "forced", pvc({}), force + pvc({storageClassName: "slow"})],
-    ["PersistentVolumeClaim", "odd", pvc({resources: {requests: {storage: "lots"}}}), pvc({resources: {requests: {storage: "1Gi"}}})],
-    ["RoleBinding", "rb", {roleRef: {kind: "Role", name: "view"}}, {roleRef: {kind: "ClusterRole", name: "admin"}}],
-    ["Service", "allocated", {spec: {}}, {spec: {clusterIP: "10.0.0.1"}}],
-    ["Service", "pinned", {spec: {clusterIP: "10.0.0.1"}}, {spec: {clusterIP: "10.0.0.2"}}]
-  ] | map({parent: {kind: (.[5] // "Kustomization"), namespace: "flux-system", name: "apps"},
-      apiVersion: (.[4] // {StatefulSet: "apps/v1", Deployment: "apps/v1", Job: "batch/v1",
-        RoleBinding: "rbac.authorization.k8s.io/v1"}[.[0]] // "v1"),
-      kind: .[0], namespace: "apps", name: .[1],
-      status: (if .[2] == null then "added" elif .[3] == null then "removed" else "changed" end),
-      old: .[2], new: .[3]}), suppressed: []}' > lint.json
-HEAD_SHA=abcdef0123456 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" lint.json 2> annotations.txt
-row() { grep -q "^| \`$1\` | \`Kustomization flux-system/apps\` | \`$2\` | $3 |$" comment.md; }
-export -f row
-check "flags a StatefulSet volumeClaimTemplates change" row 'StatefulSet apps/vct' immutable-field '`spec.volumeClaimTemplates` changed'
-check "flags a Deployment selector change" row 'Deployment apps/selector' immutable-field '`spec.selector` changed'
-check "flags a Job template change" row 'Job apps/migrate' immutable-field '`spec.template` changed'
-check "says when Flux force recreates the object" row 'Job apps/forced' immutable-field '`spec.template` changed (Flux `force` enabled: recreated)'
-check "flags a PVC storage request lowered, across units" \
-  row 'PersistentVolumeClaim apps/shrink' pvc-shrink 'storage request `10240Mi` → `9Gi`: a PersistentVolumeClaim can only grow'
-check "flags the immutable fields of a PVC spec" row 'PersistentVolumeClaim apps/shrink' immutable-field '`spec.volumeMode` changed'
-check "flags a PVC bound to another volume, not a first binding" bash -c \
-  'row "PersistentVolumeClaim apps/rebind" immutable-field "\`spec.volumeName\` changed" && ! grep -q "apps/bind\`" comment.md'
-check "flags a PVC storageClassName change" row 'PersistentVolumeClaim apps/class' immutable-field '`spec.storageClassName` changed'
-check "flags a roleRef change" row 'RoleBinding apps/rb' immutable-field '`roleRef` changed'
-check "flags a pinned clusterIP change" row 'Service apps/pinned' immutable-field '`spec.clusterIP` changed'
-check "warns that recreating a PVC can delete its data" \
-  row 'PersistentVolumeClaim apps/forced' immutable-field '`spec.storageClassName` changed (Flux `force` enabled: recreating the claim can delete its data)'
-check "says when the TTL of the Job in place lets Flux recreate it" bash -c \
-  'note="\`spec.template\` changed (\`ttlSecondsAfterFinished\` set: fails until the previous Job finishes and its TTL expires)"
-  row "Job apps/ttl" immutable-field "$note" && row "Job apps/ttl-dropped" immutable-field "$note" &&
-  row "Job apps/ttl-added" immutable-field "\`spec.template\` changed"'
-check "warns that recreating a StatefulSet deletes the claims it owns" row 'StatefulSet apps/owned' immutable-field \
-  '`spec.serviceName` changed (Flux `force` enabled: recreating it deletes its PersistentVolumeClaims, `whenDeleted: Delete`)'
-check "reads the force annotation under a Kustomization only" bash -c \
-  'grep -q "^| \`PersistentVolumeClaim apps/hr-forced\` | \`HelmRelease flux-system/apps\` | \`pvc-shrink\` | storage request \`10Gi\` → \`5Gi\`: a PersistentVolumeClaim can only grow |$" comment.md'
-check "keeps PVC data loss out of the immutable-field explanation" bash -c '! grep "^- \`immutable-field\`" comment.md | grep -q PersistentVolumeClaim'
-check "leaves mutable and allocated fields, other API groups, hooks and added objects alone" bash -c \
-  '! grep -Eq "apps/(rollout|kruise|added|image|hook|grow|allocated|odd)\`" comment.md'
-check "explains each rule found" bash -c \
-  '[[ $(grep -c "^- \`immutable-field\`: the API server refuses" comment.md) == 1 ]] && grep -q "^- \`pvc-shrink\`: " comment.md'
+yq -o json "$root/tests/lint/cases.yaml" > cases.json
+jq -L "$lib" -L "$root/tests/lint" -c 'include "flux-lint"; include "case";
+  .[] | {name, got: [case_input | lint[] | case_line] | sort, expect: (.expect | sort)}' cases.json > results.json
+while read -r result; do
+  name=$(jq -r .name <<< "$result")
+  if jq -e '.got == .expect' <<< "$result" > /dev/null; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name"
+    diff <(jq -r '.expect[]' <<< "$result") <(jq -r '.got[]' <<< "$result") | sed 's/^/     /' || true
+    failures=$((failures + 1))
+  fi
+done < results.json
+# Every row of SEMANTICS.md is checked by a case, and every case points at a row
+semantics=$(grep -oE '^\| [A-Z][0-9]+ \|' "$root/tests/lint/SEMANTICS.md" | tr -d '| ' | sort -u)
+refs=$(jq -r '.[].refs[]' cases.json | sort -u)
+check "checks every behavior SEMANTICS.md lists" diff <(echo "$semantics") <(echo "$refs")
+
+echo "# flux-diff lint wiring"
+# How flux-diff-comment.sh feeds the lint and shows its warnings; what each rule flags is in
+# the cases above
+jq -n -L "$root/tests/lint" 'include "case"; {changes: [
+    {kind: "StatefulSet", name: "vct", old: {spec: {volumeClaimTemplates: [1]}}, new: {spec: {volumeClaimTemplates: [2]}}},
+    {kind: "PersistentVolumeClaim", name: "shrink", old: {spec: {resources: {requests: {storage: "2Gi"}}}},
+      new: {spec: {resources: {requests: {storage: "1Gi"}}}}},
+    {kind: "PersistentVolumeClaim", name: "data", old: {}},
+    {kind: "ConfigMap", name: "cm", old: {}},
+    {kind: "ConfigMap", name: "a", parent: "Kustomization/legacy", old: {}}
+  ] | map(case_change | del(.cluster)), suppressed: []}' > lint.json
+jq -n '[["apps", true], ["legacy", false]] | map({cluster: "", namespace: "flux-system", name: .[0], prune: .[1]})' > prune.json
+HEAD_SHA=abcdef0123456 RUN_URL=https://example.com/run KS_PRUNE=prune.json "$lib/flux-diff-comment.sh" lint.json 2> annotations.txt
+check "lists the warnings at the top of the comment" bash -c \
+  'grep -q "^> \[!CAUTION\]$" comment.md && [[ $(grep -c "^| \`.*\` | \`Kustomization flux-system/.*\` | \`[a-z-]*\` | " comment.md) == 4 ]] &&
+  grep -qF "| \`PersistentVolumeClaim apps/shrink\` | \`Kustomization flux-system/apps\` | \`pvc-shrink\` | storage request \`2Gi\` → \`1Gi\`: a PersistentVolumeClaim can only grow |" comment.md'
+check "explains each rule found once" bash -c \
+  'for rule in immutable-field pvc-shrink removed not-pruned; do [[ $(grep -c "^- \`$rule\`: [a-zA-Z]" comment.md) == 1 ]] || exit 1; done'
 check "annotates the run with every warning" bash -c \
-  '[[ $(grep -c "^::warning title=" annotations.txt) == 16 ]] && grep -q "^::warning title=pvc-shrink::PersistentVolumeClaim apps/shrink (Kustomization flux-system/apps): " annotations.txt'
-MAX_LINT=2 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
+  '[[ $(grep -c "^::warning title=" annotations.txt) == 4 ]] &&
+  grep -qF "::warning title=not-pruned::ConfigMap apps/a (Kustomization flux-system/legacy): removed from git" annotations.txt'
+MAX_LINT=2 RUN_URL=https://example.com/run KS_PRUNE=prune.json "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
 check "caps the warnings and links the rest" bash -c \
-  '[[ $(grep -c "^| \`.*\` | \`Kustomization flux-system/apps\` | \`" comment.md) == 2 ]] && grep -q "^_14 more in the \[run logs\](https://example.com/run)\._$" comment.md'
+  '[[ $(grep -c "^| \`.*\` | \`Kustomization flux-system/.*\` | \`" comment.md) == 2 ]] && grep -q "^_2 more in the \[run logs\](https://example.com/run)\._$" comment.md'
+"$lib/flux-diff-comment.sh" lint.json 2> /dev/null
+check "hedges the removals without the prune settings" bash -c \
+  'grep -qF "| \`removed\` | deleted on merge if the Kustomization prunes: " comment.md && ! grep -q "\`not-pruned\`" comment.md'
+KS_PRUNE=prune.json REMOVAL_KINDS=$' Secret,\n ConfigMap\n' "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
+check "reads removal-kinds split on commas, spaces and newlines" bash -c \
+  'grep -qF "| \`ConfigMap apps/cm\` | \`Kustomization flux-system/apps\` | \`removed\` | deleted on merge |" comment.md && ! grep -q "apps/data\`" comment.md'
+KS_PRUNE=prune.json REMOVAL_KINDS='' "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
+check "keeps the objects left behind with an empty removal-kinds" bash -c '! grep -q "\`removed\`" comment.md && grep -q "\`not-pruned\`" comment.md'
 # The pull request diff shows the edited manifest, so the Kustomization is only counted
 jq -n '{"flux-system/apps": {why: "direct", source: ""}}' > direct.json
 KS_SCOPE=direct.json "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
 check "warns about a Kustomization the comment leaves out" bash -c \
   '[[ ! -f noop ]] && grep -q "^> \[!CAUTION\]$" comment.md && grep -q "apps/vct" comment.md && ! grep -q "^--- StatefulSet" comment.md'
-# The same object in two clusters keeps a row per cluster
+# flate prints the cluster on each group: the same object in two clusters keeps a row per cluster
 jq '[{cluster: "staging"}, {cluster: "prod"}] | map(. + {changes: [$d[0].changes[0]], suppressed: []})' \
-  --slurpfile d lint.json -n > multi.json
-"$lib/flux-diff-comment.sh" multi.json 2> /dev/null
+  --slurpfile d lint.json -n > multi-cluster.json
+"$lib/flux-diff-comment.sh" multi-cluster.json 2> /dev/null
 check "keeps a warning per cluster" bash -c \
   'grep -q "| \`Kustomization flux-system/apps (staging)\` |" comment.md && grep -q "| \`Kustomization flux-system/apps (prod)\` |" comment.md'
 LINT=false "$lib/flux-diff-comment.sh" lint.json 2> annotations.txt
 check "turns the warnings off" bash -c '! grep -q CAUTION comment.md && [[ ! -s annotations.txt ]]'
 
-echo "# flux-diff lint removals"
-mkdir "$work/removals" && cd "$work/removals"
-# One change per [kind, name, old, new, parent kind, parent name, apiVersion?, cluster?], null
-# for an added or removed object; kustomizations.json is what kustomization-prune.sh prints
-jq -n '
-  def obj: {metadata: {}, spec: {}};
-  def ann($k; $v): obj + {metadata: {annotations: {($k): $v}}};
-  def ks($s): {spec: ({path: "./apps", sourceRef: {kind: "GitRepository", name: "flux-system"}} + $s)};
-  {changes: [
-    ["PersistentVolumeClaim", "data", obj, null, "Kustomization", "apps"],
-    ["StatefulSet", "db", obj, null, "Kustomization", "apps"],
-    ["StatefulSet", "db-owned", {spec: {persistentVolumeClaimRetentionPolicy: {whenDeleted: "Delete"}}}, null, "Kustomization", "apps"],
-    ["Namespace", "team", obj, null, "Kustomization", "apps"],
-    ["ConfigMap", "cm", obj, null, "Kustomization", "apps"],
-    ["PersistentVolumeClaim", "kept", ann("kustomize.toolkit.fluxcd.io/prune"; "disabled"), null, "Kustomization", "apps"],
-    ["PersistentVolumeClaim", "moved", obj, null, "Kustomization", "apps"],
-    ["PersistentVolumeClaim", "moved", null, obj, "Kustomization", "other"],
-    ["ConfigMap", "moved-cm", obj, null, "Kustomization", "legacy"],
-    ["ConfigMap", "moved-cm", null, obj, "Kustomization", "other"],
-    ["StatefulSet", "kruise", obj, null, "Kustomization", "apps", "apps.kruise.io/v1beta1"],
-    ["StatefulSet", "migrated", obj, null, "Kustomization", "apps"],
-    ["StatefulSet", "migrated", null, obj, "Kustomization", "apps", "apps.kruise.io/v1beta1"],
-    ["ConfigMap", "solo", obj, null, "Kustomization", "legacy", null, "prod"],
-    ["HelmRelease", "kept-release", obj, null, "Kustomization", "keeper"],
-    ["PersistentVolumeClaim", "release-data", obj, null, "HelmRelease", "kept-release"],
-    ["HelmRelease", "dropped", obj, null, "Kustomization", "apps"],
-    ["PersistentVolumeClaim", "dropped-data", obj, null, "HelmRelease", "dropped"],
-    ["Kustomization", "stays", ks({prune: true}), null, "Kustomization", "keeper"],
-    ["PersistentVolumeClaim", "still-applied", obj, null, "Kustomization", "stays"],
-    ["ConfigMap", "a", obj, null, "Kustomization", "legacy"],
-    ["ConfigMap", "b", obj, null, "Kustomization", "legacy"],
-    ["PersistentVolumeClaim", "c", obj, null, "Kustomization", "legacy"],
-    ["ConfigMap", "lone", obj, null, "Kustomization", "flipped"],
-    ["Kustomization", "flipped", ks({prune: true}), ks({prune: false}), "Kustomization", "flux-system"],
-    ["PersistentVolumeClaim", "unknown", obj, null, "Kustomization", "unlisted"],
-    ["Kustomization", "orphaning", ks({prune: true, deletionPolicy: "Orphan"}), null, "Kustomization", "flux-system"],
-    ["PersistentVolumeClaim", "left", obj, null, "Kustomization", "orphaning"],
-    ["Kustomization", "pruning", ks({prune: true}), null, "Kustomization", "flux-system"],
-    ["PersistentVolumeClaim", "collected", obj, null, "Kustomization", "pruning"],
-    ["CustomResourceDefinition", "widgets.example.com", {spec: {names: {kind: "Widget"}}}, null, "HelmRelease", "chart"],
-    ["NetworkPolicy", "deny", obj, null, "HelmRelease", "chart"],
-    ["NetworkPolicy", "resource-policy", ann("helm.sh/resource-policy"; "keep"), null, "HelmRelease", "chart"]
-  ] | map({parent: {kind: .[4], namespace: "flux-system", name: .[5]},
-      apiVersion: (.[6] // {StatefulSet: "apps/v1", NetworkPolicy: "networking.k8s.io/v1",
-        CustomResourceDefinition: "apiextensions.k8s.io/v1", Kustomization: "kustomize.toolkit.fluxcd.io/v1",
-        HelmRelease: "helm.toolkit.fluxcd.io/v2"}[.[0]] // "v1"),
-      kind: .[0], namespace: (if .[0] | IN("Namespace", "CustomResourceDefinition") then ""
-        elif .[0] | IN("Kustomization", "HelmRelease") then "flux-system" else "apps" end),
-      name: .[1], status: (if .[2] == null then "added" elif .[3] == null then "removed" else "changed" end),
-      old: .[2], new: .[3], cluster: (.[7] // "")}), suppressed: []}' > all.json
-# flate prints a cluster per group, not per change
-jq '.changes |= map(select(.cluster == "") | del(.cluster))' all.json > removals.json
-jq '{cluster: "prod", changes: [.changes[] | select(.cluster == "prod") | del(.cluster)], suppressed: []}' all.json > prod.json
-# Listed without a cluster, as `flate get ks` prints a single one: the diff may name it
-jq -n '[["flux-system", true], ["apps", true], ["legacy", false], ["other", true], ["keeper", false]]
-  | map({cluster: "", namespace: "flux-system", name: .[0], prune: .[1]})' > kustomizations.json
-KS_PRUNE=kustomizations.json "$lib/flux-diff-comment.sh" removals.json prod.json 2> annotations.txt
-row() { grep -qF "| \`$1\` | \`$2\` | \`$3\` | $4 |" comment.md; }
-export -f row
-check "flags a PVC a pruning Kustomization deletes" row 'PersistentVolumeClaim apps/data' 'Kustomization flux-system/apps' removed \
-  'deleted on merge: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
-check "says whether a deleted StatefulSet takes its claims" bash -c \
-  'row "StatefulSet apps/db" "Kustomization flux-system/apps" removed "deleted on merge: its pods stop, its PersistentVolumeClaims stay" &&
-  row "StatefulSet apps/db-owned" "Kustomization flux-system/apps" removed "deleted on merge: its PersistentVolumeClaims go with it, \`whenDeleted: Delete\`, which can delete their data"'
-check "flags a deleted Namespace" row 'Namespace team' 'Kustomization flux-system/apps' removed 'deleted on merge: deleting the namespace deletes every object in it'
-check "flags what a HelmRelease no longer renders" bash -c \
-  'row "CustomResourceDefinition widgets.example.com" "HelmRelease flux-system/chart" removed "deleted on merge: deleting the definition deletes every \`Widget\` in the cluster, unless the chart ships it in \`crds/\`, which Helm never deletes" &&
-  row "NetworkPolicy apps/deny" "HelmRelease flux-system/chart" removed "deleted on merge: traffic it denied can then be allowed"'
-check "reports the objects a Kustomization does not prune, once per Kustomization" bash -c \
-  'row "3 objects" "Kustomization flux-system/legacy" not-pruned "removed from git but left in the cluster, where nothing manages them any more" &&
-  ! grep -Eq "apps/(a|b|c)\`" comment.md'
-check "reads the prune setting from a Kustomization the pull request changes" \
-  row 'ConfigMap apps/lone' 'Kustomization flux-system/flipped' not-pruned 'removed from git but left in the cluster, where nothing manages it any more'
-check "follows the deletionPolicy of a removed Kustomization" bash -c \
-  'row "PersistentVolumeClaim apps/left" "Kustomization flux-system/orphaning" not-pruned "removed from git but left in the cluster, where nothing manages it any more" &&
-  row "PersistentVolumeClaim apps/collected" "Kustomization flux-system/pruning" removed "deleted on merge: deleting the claim can delete its data, depending on the \`reclaimPolicy\` of its volume"'
-check "hedges when the prune setting is unknown" row 'PersistentVolumeClaim apps/unknown' 'Kustomization flux-system/unlisted' removed \
-  'deleted on merge if the Kustomization prunes: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
-check "warns that a moved object can be deleted before its new producer applies it" \
-  row 'PersistentVolumeClaim apps/moved' 'Kustomization flux-system/apps' removed \
-  'moves to `Kustomization flux-system/other`, deleted and recreated if `Kustomization flux-system/apps` reconciles first: deleting the claim can delete its data, depending on the `reclaimPolicy` of its volume'
-check "tells a moved object from one of another API group" \
-  row 'StatefulSet apps/migrated' 'Kustomization flux-system/apps' removed 'deleted on merge: its pods stop, its PersistentVolumeClaims stay'
-check "matches a Kustomization listed without its cluster" \
-  row 'ConfigMap apps/solo' 'Kustomization flux-system/legacy (prod)' not-pruned 'removed from git but left in the cluster, where nothing manages it any more'
-check "follows the fate of a removed HelmRelease" bash -c \
-  'row "PersistentVolumeClaim apps/dropped-data" "HelmRelease flux-system/dropped" removed "deleted on merge: deleting the claim can delete its data, depending on the \`reclaimPolicy\` of its volume" &&
-  ! grep -q "apps/release-data\`" comment.md'
-check "leaves the objects of a removed Kustomization that stays in the cluster" bash -c '! grep -q "apps/still-applied\`" comment.md'
-check "leaves other kinds, other API groups and kept objects alone, and moves out of the orphans" bash -c \
-  '! grep -Eq "apps/(cm|kept|moved-cm|kruise|resource-policy)\`" comment.md && ! grep -q "^| \`Kustomization flux-system/" comment.md &&
-  row "2 objects" "Kustomization flux-system/keeper" not-pruned "removed from git but left in the cluster, where nothing manages them any more"'
-check "explains the removal rules" bash -c 'grep -q "^- \`removed\`: Flux deletes" comment.md &&
-  grep -q "^- \`not-pruned\`: a Kustomization that does not prune, or removed with \`deletionPolicy: Orphan\`, " comment.md'
-check "annotates the run with every removal warning" bash -c '[[ $(grep -c "^::warning title=" annotations.txt) == 16 ]]'
-KS_PRUNE=kustomizations.json REMOVAL_KINDS=$' Secret,\n ConfigMap\n' "$lib/flux-diff-comment.sh" removals.json 2> /dev/null
-check "warns about the kinds removal-kinds lists" bash -c \
-  'row "ConfigMap apps/cm" "Kustomization flux-system/apps" removed "deleted on merge" && ! grep -q "apps/data\`" comment.md && grep -q "\`not-pruned\`" comment.md'
-KS_PRUNE=kustomizations.json REMOVAL_KINDS='' "$lib/flux-diff-comment.sh" removals.json 2> /dev/null
-check "still reports objects left behind with an empty removal-kinds" bash -c '! grep -q "\`removed\`" comment.md && grep -q "\`not-pruned\`" comment.md'
 # kustomization-prune.sh: flate only runs when a Kustomization removes an object
 cat > "$work/bin/flate" << 'EOF2'
 #!/usr/bin/env bash
@@ -398,20 +269,20 @@ exit "${FLATE_RC:-0}"
 EOF2
 chmod +x "$work/bin/flate"
 export FLATE_LOG=$PWD/flate.log
-jq '.changes |= map(select(.parent.kind == "HelmRelease"))' removals.json > hr-only.json
+jq '.changes |= map(select(.parent.kind == "HelmRelease"))' lint.json > hr-only.json
 check "skips the listing without a Kustomization removal" bash -c \
   '[[ $("$1" hr-only.json pr/clusters/a) == "[]" && ! -s flate.log ]]' _ "$lib/kustomization-prune.sh"
 jq -n '[{kind: "Kustomization", namespace: "flux-system", name: "apps", path: "./apps", prune: true}]' > single.json
 check "lists the prune setting of a single cluster" bash -c \
-  '[[ $(FLATE_OUT=single.json FLATE_BASE=base "$1" removals.json pr/clusters/a --allow-missing-kinds X) == "[{\"cluster\":\"\",\"namespace\":\"flux-system\",\"name\":\"apps\",\"prune\":true}]" ]] &&
+  '[[ $(FLATE_OUT=single.json FLATE_BASE=base "$1" lint.json pr/clusters/a --allow-missing-kinds X) == "[{\"cluster\":\"\",\"namespace\":\"flux-system\",\"name\":\"apps\",\"prune\":true}]" ]] &&
   grep -qx "get ks --allow-missing-kinds X --path pr/clusters/a -o json" flate.log' _ "$lib/kustomization-prune.sh"
 jq -n '[{cluster: "prod", documents: [{kind: "Kustomization", name: "apps", namespace: "flux-system", prune: false}]}]' > multi.json
 check "lists the prune setting of each cluster" bash -c \
-  '[[ $(FLATE_OUT=multi.json "$1" removals.json pr) == "[{\"cluster\":\"prod\",\"namespace\":\"flux-system\",\"name\":\"apps\",\"prune\":false}]" ]]' _ "$lib/kustomization-prune.sh"
+  '[[ $(FLATE_OUT=multi.json "$1" lint.json pr) == "[{\"cluster\":\"prod\",\"namespace\":\"flux-system\",\"name\":\"apps\",\"prune\":false}]" ]]' _ "$lib/kustomization-prune.sh"
 check "keeps what flate lists when a Kustomization fails" bash -c \
-  '[[ $(FLATE_OUT=single.json FLATE_RC=1 "$1" removals.json pr 2> err.txt) == *"\"name\":\"apps\""* ]] && grep -q "^::warning::flate could not list every" err.txt' _ "$lib/kustomization-prune.sh"
+  '[[ $(FLATE_OUT=single.json FLATE_RC=1 "$1" lint.json pr 2> err.txt) == *"\"name\":\"apps\""* ]] && grep -q "^::warning::flate could not list every" err.txt' _ "$lib/kustomization-prune.sh"
 check "falls back to an empty list when flate fails" bash -c \
-  '[[ $(FLATE_OUT=/dev/null "$1" removals.json pr 2> err.txt) == "[]" ]] && grep -q "^::warning::" err.txt' _ "$lib/kustomization-prune.sh"
+  '[[ $(FLATE_OUT=/dev/null "$1" lint.json pr 2> err.txt) == "[]" ]] && grep -q "^::warning::" err.txt' _ "$lib/kustomization-prune.sh"
 rm "$work/bin/flate"
 unset FLATE_LOG
 
