@@ -41,8 +41,10 @@ case $KS_MODE in
 esac
 
 # A file is empty when flate short-circuits identical trees, an array for multi-cluster repos
+# Each change keeps its cluster, "" for a single-cluster output
 jq -s 'map(if type == "array" then .[] else . end)
-  | {changes: map(.changes // [] | .[]), suppressed: map(.suppressed // [] | .[])}' "$@" > "$work/raw.json"
+  | {changes: map((.cluster // "") as $c | .changes // [] | .[] | . + {cluster: $c}),
+     suppressed: map(.suppressed // [] | .[])}' "$@" > "$work/raw.json"
 
 # Before the Kustomizations are filtered: a risk hides in a change the pull request diff shows too
 if [[ $LINT == false ]]; then
@@ -226,7 +228,7 @@ jq -r --arg sha "${HEAD_SHA::7}" --arg run "$RUN_URL" --arg partial "$PARTIAL" \
   def id: if (.namespace // "") != "" then "\(.namespace)/\(.name)" else .name end;
   def why: {
     "immutable-field": "the API server refuses to update these fields in place, so the reconciliation fails until the object is deleted and recreated, which Flux does when `force` is enabled",
-    "pvc-shrink": "the API server refuses to lower the storage request of a bound PersistentVolumeClaim, and the reconciliation fails"
+    "pvc-shrink": "the API server refuses to lower the storage request of a PersistentVolumeClaim, so the reconciliation fails; Flux `force` would recreate the claim, which can delete its data"
   }[.] // "";
   $lint[0] as $lint
   | "### Rendered Flux diff (\($sha))", "",

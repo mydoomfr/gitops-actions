@@ -68,17 +68,30 @@ at the top of the comment, and as annotations on the run:
 
 | Rule | Change |
 |---|---|
-| `immutable-field` | A StatefulSet `spec` field other than `replicas`, `template`, `updateStrategy`, `persistentVolumeClaimRetentionPolicy`, `minReadySeconds` and `ordinals`, such as `volumeClaimTemplates` |
+| `immutable-field` | A StatefulSet `spec` field other than `replicas`, `template`, `updateStrategy`, `revisionHistoryLimit`, `persistentVolumeClaimRetentionPolicy`, `minReadySeconds` and `ordinals`, such as `volumeClaimTemplates` |
 | | The `selector` of a Deployment, DaemonSet or ReplicaSet |
 | | The `selector` or `template` of a Job, except a Helm hook, which Helm recreates |
-| | A PersistentVolumeClaim `spec` field other than `resources` and `volumeAttributesClassName`, such as `storageClassName` |
+| | A PersistentVolumeClaim `spec` field other than `resources` and `volumeAttributesClassName`, such as `storageClassName`; a first `volumeName` binds the claim and is allowed |
 | | The `roleRef` of a RoleBinding or ClusterRoleBinding |
 | | The `clusterIP` of a Service, when both sides set one |
 | `pvc-shrink` | A lower storage request on a PersistentVolumeClaim |
 
-Every change is checked, including those of the Kustomizations the comment leaves out.
-An object with the `kustomize.toolkit.fluxcd.io/force: enabled` annotation is still
-listed, with a note that Flux recreates it. Set `lint: false` to turn the warnings off.
+The rules apply to the Kubernetes API groups only (`apps`, `batch`, core,
+`rbac.authorization.k8s.io`): a custom resource reusing a kind name, such as an OpenKruise
+StatefulSet, is not checked. Set `lint: false` to turn the warnings off.
+
+The changes of the Kustomizations the comment leaves out are checked too, except with
+`kustomizations: none`, which skips the Kustomization render altogether. A producer that
+failed to render is not checked: its objects are left out of the diff, as the comment
+warns. A warning names the producer, and its cluster when flate reports one.
+
+Some warnings carry a note:
+
+- an object with the `kustomize.toolkit.fluxcd.io/force: enabled` annotation, under a
+  Kustomization, is recreated by Flux; recreating a PersistentVolumeClaim can delete its
+  data, and recreating a StatefulSet with `whenDeleted: Delete` deletes its claims;
+- a Job whose version in the cluster sets `ttlSecondsAfterFinished` fails until it
+  finishes and its TTL expires: Flux then creates the new one.
 
 The Kustomization-wide `spec.force` is not read. Labels that flate leaves out of the
 diff, such as `helm.sh/chart` in `volumeClaimTemplates`, are not compared either: a

@@ -164,15 +164,18 @@ check "links the run summary for a section over MAX_CHARS" bash -c 'grep -q "^- 
 
 echo "# flux-diff lint"
 mkdir "$work/lint" && cd "$work/lint"
-# One change per [kind, name, old, new], null for an added or removed object, all under
-# the Kustomization apps; sts() and pvc() merge their argument into a base spec
+# One change per [kind, name, old, new, apiVersion?, parent kind?], null for an added or
+# removed object, under the Kustomization apps by default; sts() and pvc() merge their
+# argument into a base spec
 jq -n '
   def sts($s): {spec: ({replicas: 1, serviceName: "db", template: {spec: {containers: [{image: "pg:1"}]}},
     volumeClaimTemplates: [{spec: {resources: {requests: {storage: "1Gi"}}}}]} + $s)};
   def pvc($s): {spec: ({storageClassName: "fast", resources: {requests: {storage: "10Gi"}}} + $s)};
+  def force: {metadata: {annotations: {"kustomize.toolkit.fluxcd.io/force": "enabled"}}};
   {changes: [
     ["StatefulSet", "vct", sts({}), sts({volumeClaimTemplates: [{spec: {resources: {requests: {storage: "2Gi"}}}}]})],
-    ["StatefulSet", "rollout", sts({}), sts({replicas: 3, template: {spec: {containers: [{image: "pg:2"}]}}})],
+    ["StatefulSet", "rollout", sts({}), sts({replicas: 3, revisionHistoryLimit: 5, template: {spec: {containers: [{image: "pg:2"}]}}})],
+    ["StatefulSet", "kruise", sts({}), sts({reserveOrdinals: [1]}), "apps.kruise.io/v1beta1"],
     ["StatefulSet", "added", null, sts({serviceName: "other"})],
     ["Deployment", "selector", {spec: {selector: {matchLabels: {app: "a"}}}}, {spec: {selector: {matchLabels: {app: "b"}}}}],
     ["Deployment", "image", {spec: {template: {spec: {containers: [{image: "a:1"}]}}}}, {spec: {template: {spec: {containers: [{image: "a:2"}]}}}}],
@@ -180,16 +183,31 @@ jq -n '
     ["Job", "hook", {metadata: {annotations: {"helm.sh/hook": "pre-upgrade"}}, spec: {template: {spec: {containers: [{image: "h:1"}]}}}},
       {metadata: {annotations: {"helm.sh/hook": "pre-upgrade"}}, spec: {template: {spec: {containers: [{image: "h:2"}]}}}}],
     ["Job", "forced", {spec: {template: {spec: {containers: [{image: "f:1"}]}}}},
-      {metadata: {annotations: {"kustomize.toolkit.fluxcd.io/force": "enabled"}}, spec: {template: {spec: {containers: [{image: "f:2"}]}}}}],
+      force + {spec: {template: {spec: {containers: [{image: "f:2"}]}}}}],
+    ["Job", "ttl", {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: "t:1"}]}}}},
+      {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: "t:2"}]}}}}],
+    ["Job", "ttl-added", {spec: {template: {spec: {containers: [{image: "t:1"}]}}}},
+      {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: "t:2"}]}}}}],
+    ["Job", "ttl-dropped", {spec: {ttlSecondsAfterFinished: 60, template: {spec: {containers: [{image: "t:1"}]}}}},
+      {spec: {template: {spec: {containers: [{image: "t:2"}]}}}}],
+    ["StatefulSet", "owned", sts({}),
+      force + sts({persistentVolumeClaimRetentionPolicy: {whenDeleted: "Delete"}, serviceName: "other"})],
     ["PersistentVolumeClaim", "shrink", pvc({resources: {requests: {storage: "10240Mi"}}}),
-      pvc({resources: {requests: {storage: "9Gi"}}, volumeName: "pv-1"})],
+      pvc({resources: {requests: {storage: "9Gi"}}, volumeMode: "Block"})],
+    ["PersistentVolumeClaim", "hr-forced", pvc({}), force + pvc({resources: {requests: {storage: "5Gi"}}}), null, "HelmRelease"],
+    ["PersistentVolumeClaim", "bind", pvc({}), pvc({volumeName: "pv-1"})],
+    ["PersistentVolumeClaim", "rebind", pvc({volumeName: "pv-1"}), pvc({volumeName: "pv-2"})],
     ["PersistentVolumeClaim", "grow", pvc({}), pvc({resources: {requests: {storage: "20Gi"}}})],
     ["PersistentVolumeClaim", "class", pvc({}), pvc({storageClassName: "slow"})],
+    ["PersistentVolumeClaim", "forced", pvc({}), force + pvc({storageClassName: "slow"})],
     ["PersistentVolumeClaim", "odd", pvc({resources: {requests: {storage: "lots"}}}), pvc({resources: {requests: {storage: "1Gi"}}})],
     ["RoleBinding", "rb", {roleRef: {kind: "Role", name: "view"}}, {roleRef: {kind: "ClusterRole", name: "admin"}}],
     ["Service", "allocated", {spec: {}}, {spec: {clusterIP: "10.0.0.1"}}],
     ["Service", "pinned", {spec: {clusterIP: "10.0.0.1"}}, {spec: {clusterIP: "10.0.0.2"}}]
-  ] | map({parent: {kind: "Kustomization", namespace: "flux-system", name: "apps"}, kind: .[0], namespace: "apps", name: .[1],
+  ] | map({parent: {kind: (.[5] // "Kustomization"), namespace: "flux-system", name: "apps"},
+      apiVersion: (.[4] // {StatefulSet: "apps/v1", Deployment: "apps/v1", Job: "batch/v1",
+        RoleBinding: "rbac.authorization.k8s.io/v1"}[.[0]] // "v1"),
+      kind: .[0], namespace: "apps", name: .[1],
       status: (if .[2] == null then "added" elif .[3] == null then "removed" else "changed" end),
       old: .[2], new: .[3]}), suppressed: []}' > lint.json
 HEAD_SHA=abcdef0123456 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" lint.json 2> annotations.txt
@@ -201,23 +219,43 @@ check "flags a Job template change" row 'Job apps/migrate' immutable-field '`spe
 check "says when Flux force recreates the object" row 'Job apps/forced' immutable-field '`spec.template` changed (Flux `force` enabled: recreated)'
 check "flags a PVC storage request lowered, across units" \
   row 'PersistentVolumeClaim apps/shrink' pvc-shrink 'storage request `10240Mi` → `9Gi`: a PersistentVolumeClaim can only grow'
-check "flags the immutable fields of a PVC spec" row 'PersistentVolumeClaim apps/shrink' immutable-field '`spec.volumeName` changed'
+check "flags the immutable fields of a PVC spec" row 'PersistentVolumeClaim apps/shrink' immutable-field '`spec.volumeMode` changed'
+check "flags a PVC bound to another volume, not a first binding" bash -c \
+  'row "PersistentVolumeClaim apps/rebind" immutable-field "\`spec.volumeName\` changed" && ! grep -q "apps/bind\`" comment.md'
 check "flags a PVC storageClassName change" row 'PersistentVolumeClaim apps/class' immutable-field '`spec.storageClassName` changed'
 check "flags a roleRef change" row 'RoleBinding apps/rb' immutable-field '`roleRef` changed'
 check "flags a pinned clusterIP change" row 'Service apps/pinned' immutable-field '`spec.clusterIP` changed'
-check "leaves mutable and allocated fields, hooks and added objects alone" bash -c \
-  '! grep -Eq "apps/(rollout|added|image|hook|grow|allocated|odd)\`" comment.md'
+check "warns that recreating a PVC can delete its data" \
+  row 'PersistentVolumeClaim apps/forced' immutable-field '`spec.storageClassName` changed (Flux `force` enabled: recreating the claim can delete its data)'
+check "says when the TTL of the Job in place lets Flux recreate it" bash -c \
+  'note="\`spec.template\` changed (\`ttlSecondsAfterFinished\` set: fails until the previous Job finishes and its TTL expires)"
+  row "Job apps/ttl" immutable-field "$note" && row "Job apps/ttl-dropped" immutable-field "$note" &&
+  row "Job apps/ttl-added" immutable-field "\`spec.template\` changed"'
+check "warns that recreating a StatefulSet deletes the claims it owns" row 'StatefulSet apps/owned' immutable-field \
+  '`spec.serviceName` changed (Flux `force` enabled: recreating it deletes its PersistentVolumeClaims, `whenDeleted: Delete`)'
+check "reads the force annotation under a Kustomization only" bash -c \
+  'grep -q "^| \`PersistentVolumeClaim apps/hr-forced\` | \`HelmRelease flux-system/apps\` | \`pvc-shrink\` | storage request \`10Gi\` → \`5Gi\`: a PersistentVolumeClaim can only grow |$" comment.md'
+check "keeps PVC data loss out of the immutable-field explanation" bash -c '! grep "^- \`immutable-field\`" comment.md | grep -q PersistentVolumeClaim'
+check "leaves mutable and allocated fields, other API groups, hooks and added objects alone" bash -c \
+  '! grep -Eq "apps/(rollout|kruise|added|image|hook|grow|allocated|odd)\`" comment.md'
 check "explains each rule found" bash -c \
   '[[ $(grep -c "^- \`immutable-field\`: the API server refuses" comment.md) == 1 ]] && grep -q "^- \`pvc-shrink\`: " comment.md'
 check "annotates the run with every warning" bash -c \
-  '[[ $(grep -c "^::warning title=" annotations.txt) == 9 ]] && grep -q "^::warning title=pvc-shrink::PersistentVolumeClaim apps/shrink (Kustomization flux-system/apps): " annotations.txt'
+  '[[ $(grep -c "^::warning title=" annotations.txt) == 16 ]] && grep -q "^::warning title=pvc-shrink::PersistentVolumeClaim apps/shrink (Kustomization flux-system/apps): " annotations.txt'
 MAX_LINT=2 RUN_URL=https://example.com/run "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
 check "caps the warnings and links the rest" bash -c \
-  '[[ $(grep -c "^| \`.*\` | \`Kustomization flux-system/apps\` | \`" comment.md) == 2 ]] && grep -q "^_7 more in the \[run logs\](https://example.com/run)\._$" comment.md'
+  '[[ $(grep -c "^| \`.*\` | \`Kustomization flux-system/apps\` | \`" comment.md) == 2 ]] && grep -q "^_14 more in the \[run logs\](https://example.com/run)\._$" comment.md'
 # The pull request diff shows the edited manifest, so the Kustomization is only counted
-KS_MODE=none "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
+jq -n '{"flux-system/apps": {why: "direct", source: ""}}' > direct.json
+KS_SCOPE=direct.json "$lib/flux-diff-comment.sh" lint.json 2> /dev/null
 check "warns about a Kustomization the comment leaves out" bash -c \
   '[[ ! -f noop ]] && grep -q "^> \[!CAUTION\]$" comment.md && grep -q "apps/vct" comment.md && ! grep -q "^--- StatefulSet" comment.md'
+# The same object in two clusters keeps a row per cluster
+jq '[{cluster: "staging"}, {cluster: "prod"}] | map(. + {changes: [$d[0].changes[0]], suppressed: []})' \
+  --slurpfile d lint.json -n > multi.json
+"$lib/flux-diff-comment.sh" multi.json 2> /dev/null
+check "keeps a warning per cluster" bash -c \
+  'grep -q "| \`Kustomization flux-system/apps (staging)\` |" comment.md && grep -q "| \`Kustomization flux-system/apps (prod)\` |" comment.md'
 LINT=false "$lib/flux-diff-comment.sh" lint.json 2> annotations.txt
 check "turns the warnings off" bash -c '! grep -q CAUTION comment.md && [[ ! -s annotations.txt ]]'
 
